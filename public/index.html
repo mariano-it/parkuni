@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0b0b">
+  <title>ParkUni · Conductor</title>
+  <link rel="icon" type="image/png" href="img/favicon.png">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/map.css">
+  <link rel="stylesheet" href="css/driver.css">
+</head>
+<body class="driver">
+  <svg id="map" aria-label="Mapa del estacionamiento del campus"></svg>
+
+  <div class="banner" id="banner" hidden>
+    <div class="arrow" id="bArrow">↑</div>
+    <div>
+      <div class="dist" id="bDist">–</div>
+      <div class="txt" id="bText">–</div>
+    </div>
+  </div>
+  <div class="emergency-banner" id="emBanner" hidden>⚠ EMERGENCIA · Precaución. Sigue las indicaciones del personal.</div>
+  <div class="alert" id="speedAlert" hidden>Reduce la velocidad · límite <span id="aLimit">20</span> km/h</div>
+  <div class="toastbar" id="toast" hidden></div>
+
+  <button class="fab top" id="btnGear" aria-label="Ajustes">⚙</button>
+  <button class="fab top2" id="btnView" aria-label="Cambiar vista" hidden>⤢</button>
+
+  <div class="hud" id="hud">
+    <div class="speedo" id="speedo"><b id="spd">0</b><small>km/h</small></div>
+    <div class="limit"><b id="lim">20</b></div>
+    <input type="range" id="demoSpeed" min="0" max="40" value="15" title="Velocidad simulada">
+  </div>
+
+  <section class="sheet" id="sheetIdle">
+    <div class="sheet-head"><img class="logo-img logo-light" src="img/logo.png" alt="Universidad Anáhuac Cancún"><img class="logo-img logo-dark" src="img/logo-dark.png" alt="Universidad Anáhuac Cancún"><div class="eyebrow" id="idleTitle">Estacionamiento</div></div>
+    <div class="freebig"><b id="freeN">–</b><span>cajones libres</span></div>
+    <div class="chips" id="areas"></div>
+    <button class="btn primary big" id="btnGo">Llévame a un cajón</button>
+    <small class="hint" id="modeHint">Modo demo: el auto avanza solo.</small>
+  </section>
+
+  <section class="sheet" id="sheetNav" hidden>
+    <div class="navrow">
+      <div>
+        <div class="eyebrow" id="nArea">Área A</div>
+        <div class="slotid" id="nSlot">A1</div>
+      </div>
+      <div class="stat"><b id="nMin">–</b><small>m</small></div>
+      <div class="stat"><b id="nEta">–</b><small>s</small></div>
+    </div>
+    <div class="note" id="nNote"></div>
+    <div class="row">
+      <button class="btn primary" id="btnPark" hidden>Ya estacioné</button>
+      <button class="btn ghost" id="btnVoice">🔊 Voz</button>
+      <button class="btn ghost" id="btnCancel">Salir</button>
+    </div>
+  </section>
+
+  <div class="modal" id="settings" hidden>
+    <div class="modal-card">
+      <div class="modal-head"><img class="logo-img logo-light" src="img/logo.png" alt="Universidad Anáhuac Cancún"><img class="logo-img logo-dark" src="img/logo-dark.png" alt="Universidad Anáhuac Cancún"><h2>Ajustes</h2></div>
+      <label>Mapa</label>
+      <div class="seg">
+        <button id="mapProto">Prototipo (4 sensores)</button>
+        <button id="mapCampus">Campus completo</button>
+      </div>
+      <label>Apariencia</label>
+      <div class="seg">
+        <button id="thAuto">Auto (día/noche)</button>
+        <button id="thLight">Claro</button>
+        <button id="thDark">Oscuro</button>
+      </div>
+      <label>Fuente de posición y velocidad</label>
+      <div class="seg">
+        <button id="mDemo" class="on">Demo</button>
+        <button id="mGps">GPS del celular</button>
+      </div>
+      <div id="gpsBox" hidden>
+        <small id="gpsStatus">Velocidad: se mide con el GPS. Posición en el mapa: requiere calibrar.</small>
+        <div class="row wrap">
+          <button class="btn ghost" id="btnCalib">Fijar entrada con mi ubicación</button>
+          <button class="btn ghost" id="btnClearCalib">Borrar calibración</button>
+        </div>
+        <label for="bearing">Rumbo del carril (° desde el norte, 90 = hacia el este)</label>
+        <input id="bearing" type="number" min="0" max="359" value="90">
+      </div>
+      <button class="btn primary" id="btnCloseSet" style="width:100%;margin-top:14px">Listo</button>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/map-data.js"></script>
+  <script src="js/graph.js"></script>
+  <script src="js/mapview.js"></script>
+  <script src="js/driver.js"></script>
+</body>
+</html>

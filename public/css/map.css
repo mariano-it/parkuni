@@ -1,0 +1,49 @@
+/* Mapa del campus (SVG). Los colores cambian con el tema día / noche. */
+:root {
+  --ground: #ececec; --lotc: #dedede; --roadc: #c6c6c6; --island: #e4e4e4;
+  --building: #d3d3d3; --cross: #fafafa; --chev: rgba(255,255,255,.85);
+}
+:root[data-theme="dark"] {
+  --ground: #080808; --lotc: #1a1a1a; --roadc: #2c2c2c; --island: #121212;
+  --building: #1c1c1c; --cross: #3a3a3a; --chev: rgba(255,255,255,.26);
+}
+.ground { fill: var(--ground); }
+.lot { fill: var(--lotc); }
+.road { fill: none; stroke: var(--roadc); stroke-linecap: round; stroke-linejoin: round; }
+.island { fill: var(--island); }
+.building { fill: var(--building); stroke: var(--line); stroke-width: 2; }
+.cross { fill: var(--cross); }
+.nopark { fill: none; stroke: #e9b440; stroke-width: 5; stroke-dasharray: 10 6; stroke-linecap: round; }
+.busbay { fill: none; stroke: #d8484f; stroke-width: 5; stroke-linecap: round; }
+.chevrons path { fill: none; stroke: var(--chev); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
+.spot { transition: fill .3s; stroke: var(--card); stroke-width: .8; }
+.spot.free { fill: var(--free); }
+.spot.busy { fill: var(--busy); }
+.spot.none { fill: var(--muted); opacity: .4; }
+.spot.sim { opacity: .75; }
+.spot.dis { stroke: #2b8fd6; stroke-width: 2; }
+.spot.target { stroke: var(--target); stroke-width: 3; opacity: 1; }
+.sensor-dot { fill: #fff; stroke: var(--text); stroke-width: 1.5; pointer-events: none; }
+
+.agg { fill: none; stroke-width: 13; stroke-linecap: round; display: none; }
+.agg.g { stroke: var(--free); } .agg.y { stroke: #f0a020; } .agg.r { stroke: var(--busy); } .agg.n { stroke: var(--muted); opacity: .5; }
+.far .agg { display: block; }
+.far .spots, .far .sensor-dot, .far .chevrons { display: none; }
+
+.mlabel { fill: var(--muted); font-size: 15px; font-weight: 700; letter-spacing: .08em; text-anchor: middle; pointer-events: none; }
+.mlabel.big { font-size: 26px; }
+.mlabel.ring { font-size: 13px; }
+.mlabel.ok { fill: var(--free); } .mlabel.bad { fill: var(--busy); }
+.blabel { fill: var(--muted); font-size: 20px; font-weight: 700; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
+.far .mlabel { font-size: 34px; }
+.far .mlabel.big { font-size: 64px; }
+.far .blabel { font-size: 40px; }
+
+.pin-ring { fill: var(--target); opacity: .28; animation: pinpulse 1.2s ease-in-out infinite; transform-origin: center; }
+.pin-dot { fill: var(--target); stroke: #fff; stroke-width: 3; }
+@keyframes pinpulse { 50% { r: 28; opacity: .08; } }
+
+/* Emergencia / simulacro: los LED RGB de los sensores parpadean en amarillo; el mapa lo refleja */
+.emergency .spot.hw { fill: #f2c200; opacity: 1; animation: hwblink 1s steps(2, jump-none) infinite; }
+@keyframes hwblink { 0% { opacity: 1; } 50% { opacity: .15; } 100% { opacity: 1; } }

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ParkUni · Administración</title>
+  <link rel="icon" type="image/png" href="img/favicon.png">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/map.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="logo-img logo-light" src="img/logo.png" alt="Universidad Anáhuac Cancún"><img class="logo-img logo-dark" src="img/logo-dark.png" alt="Universidad Anáhuac Cancún">
+      <div><h1>ParkUni · Administración</h1><small>Universidad Anáhuac Cancún</small></div>
+    </div>
+    <div class="right">
+      <div class="seg mapseg">
+        <button id="mapProto">Prototipo</button>
+        <button id="mapCampus">Campus</button>
+      </div>
+      <a href="index.html" target="_blank">App del conductor ↗</a>
+      <div class="conn" id="conn"><span class="dot"></span><span id="connText">Conectando…</span></div>
+    </div>
+  </header>
+
+  <section class="kpis">
+    <div class="kpi good"><b id="kFree">–</b><small>cajones libres</small></div>
+    <div class="kpi bad"><b id="kBusy">–</b><small>ocupados</small></div>
+    <div class="kpi"><b id="kPct">–</b><small>ocupación</small></div>
+    <div class="kpi"><b id="kSpeed">0</b><small>excesos de velocidad</small></div>
+  </section>
+
+  <section class="emergency" id="emCard">
+    <div>
+      <h3>Emergencia / simulacro</h3>
+      <p id="emState">Normal · los LED indican libre / ocupado</p>
+    </div>
+    <form id="emForm" autocomplete="off">
+      <input type="password" id="emPass" placeholder="Contraseña" autocomplete="new-password" required>
+      <button type="submit" class="btn danger" id="btnEm">ACTIVAR EMERGENCIA</button>
+    </form>
+    <small id="emMsg"></small>
+  </section>
+
+  <section class="zoomgrid" id="zoomgrid">
+    <div class="zcol" id="zLeft"></div>
+
+    <div class="map-card main">
+      <div class="main-head">
+        <h3 id="mainTitle">Campus completo</h3>
+        <button class="btn ghost" id="btnFull" hidden>Vista completa</button>
+      </div>
+      <svg id="map" role="img" aria-label="Mapa del estacionamiento del campus"></svg>
+      <div class="legend">
+        <span><i class="sw free"></i>Libre</span>
+        <span><i class="sw busy"></i>Ocupado</span>
+        <span><i class="sw none"></i>Sin dato</span>
+        <span><i class="sw target"></i>Conductor en camino</span>
+        <span>● Punto blanco = cajón con sensor</span>
+      </div>
+      <small>Toca un cajón para forzar su estado (ocupado → libre → automático). Toca el título de una zona para ampliarla aquí.</small>
+    </div>
+
+    <div class="zcol" id="zRight"></div>
+  </section>
+
+  <section class="cards">
+    <div class="card" id="simCard">
+      <h3>Datos de los cajones sin sensor</h3>
+      <label class="switch"><input type="checkbox" id="simOn"> <span>Simular ocupación</span></label>
+      <label for="simLevel">Nivel de ocupación simulada: <b id="simLevelTxt">70%</b></label>
+      <input type="range" id="simLevel" min="0" max="100" step="5" value="70">
+      <small>Solo los cajones con sensor son reales. El resto se simula igual en todos los dispositivos. Con la simulación apagada, esos cajones aparecen "sin dato" y no se recomiendan.</small>
+    </div>
+
+    <div class="card">
+      <h3>Zonas</h3>
+      <div id="zones" class="zones"></div>
+    </div>
+
+    <div class="card">
+      <h3>Sensores ESP32</h3>
+      <div class="sensors" id="sensors"></div>
+      <small id="espNote"></small>
+    </div>
+
+    <div class="card">
+      <h3>Límite de velocidad</h3>
+      <div class="stepper">
+        <button class="btn ghost" id="limDown">−</button>
+        <b><span id="limit">20</span> km/h</b>
+        <button class="btn ghost" id="limUp">+</button>
+      </div>
+      <small>Se aplica en tiempo real a todas las apps conectadas.</small>
+    </div>
+
+    <div class="card">
+      <h3>Conductores en camino (<span id="nDrivers">0</span>)</h3>
+      <ul class="drivers-list" id="drivers"><li><small>Ninguno</small></li></ul>
+    </div>
+
+    <div class="card">
+      <h3>Pruebas</h3>
+      <div class="row wrap">
+        <button class="btn ghost" id="btnTake">Ocupar el cajón del conductor</button>
+        <button class="btn ghost" id="btnClear">Quitar cambios manuales</button>
+        <button class="btn ghost" id="btnReset">Reiniciar todo</button>
+        <button class="btn ghost" id="btnTheme">Tema: Auto</button>
+      </div>
+    </div>
+
+    <div class="card log wide">
+      <h3>Eventos</h3>
+      <ul id="log"></ul>
+    </div>
+  </section>
+
+  <script src="js/config.js"></script>
+  <script src="js/map-data.js"></script>
+  <script src="js/graph.js"></script>
+  <script src="js/mapview.js"></script>
+  <script src="js/admin.js"></script>
+</body>
+</html>

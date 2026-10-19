@@ -1,0 +1,19 @@
+# Servicio systemd para Ubuntu Server.
+#   sudo cp server/parkuni.service /etc/systemd/system/
+#   sudo nano /etc/systemd/system/parkuni.service      # ajusta las rutas y la contraseña
+#   sudo systemctl daemon-reload && sudo systemctl enable --now parkuni
+[Unit]
+Description=ParkUni - estacionamiento inteligente
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=parkuni
+WorkingDirectory=/opt/parkuni
+Environment=PARKUNI_EMERGENCY_PASSWORD=cambia-esta-contrasena
+ExecStart=/usr/bin/python3 /opt/parkuni/server/server.py --port 8000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

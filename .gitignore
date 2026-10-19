@@ -1,0 +1,10 @@
+# Generados
+server/data/
+server/certs/
+__pycache__/
+*.pyc
+
+# Sistema / editor
+.DS_Store
+.vscode/
+.idea/
