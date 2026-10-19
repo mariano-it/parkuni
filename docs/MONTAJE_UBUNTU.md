@@ -20,7 +20,7 @@
 
 ## 1. Qué es ParkUni
 
-Estacionamiento inteligente para la Universidad Anáhuac Cancún: sensores ultrasónicos + LED RGB (ESP32) que le dicen a una app web qué cajones están libres. La app (estilo Waze) asigna el cajón más cercano por ruta real, guía con voz, redirige si lo ocupan y vigila el límite de velocidad con GPS. Hay un botón de **emergencia** (contraseña) que pone los LED en amarillo intermitente.
+Estacionamiento inteligente para la Universidad Anáhuac Cancún: sensores ultrasónicos + LED RGB (ESP32) que le dicen a una app web qué cajones están libres. La app (estilo Waze) asigna el cajón más cercano por ruta real, guía con voz, redirige si lo ocupan y vigila el límite de velocidad con GPS. Hay un botón de **emergencia** (contraseña) que pone los LED en morado intermitente.
 
 ```
 ESP32 (4 sensores + 4 LED) ──POST /api/sensor──▶  server/server.py + SQLite  ◀── App del conductor / Panel admin
@@ -91,7 +91,7 @@ Claude **no puede cargar el firmware** (se hace desde Arduino IDE en la compu de
 1. En `firmware/parkuni/parkuni.ino` cambiar `SERVER_URL` a `http://<IP-del-servidor>:8000/api/sensor` (y `WIFI_SSID` si cambia la red).
 2. El usuario carga el sketch. Pedirle que abra el Monitor Serie (115200): debe verse `POST -> 200`.
 3. Verificar desde el servidor: `curl -s localhost:8000/api/status` debe mostrar `seen: ["A1","A2","A3","A4"]` y `esp: true`; abrir `http://<IP>:8000/admin.html` y ver los 4 sensores. Pedirle al usuario que tape un sensor con la mano y comprobar que el cajón cambia.
-4. Probar la **emergencia** desde el panel web (la contraseña la escribe el usuario): los 4 LED deben parpadear en amarillo en ~2 s y volver al desactivarla.
+4. Probar la **emergencia** desde el panel web (la contraseña la escribe el usuario): los 4 LED deben parpadear en morado en ~2 s y volver al desactivarla.
 
 **Plan B (solo si el ESP32 no alcanza al servidor por WiFi):** puente por cable. ESP32 conectado por USB a esta máquina y un script `server/serial_bridge.py` que lea el puerto serie y haga `POST /api/sensor` a `localhost`. Requeriría `pyserial` (`sudo apt install python3-serial`) y que el firmware imprima líneas parseables. No lo construyas sin que el usuario lo pida.
 
@@ -116,7 +116,7 @@ Menú interactivo en terminal, con diseño ASCII, para operar el servidor sin re
 ### Requisitos
 - Python **estándar** (`curses`, `sqlite3`, `subprocess`, `urllib`): **sin dependencias externas** (la máquina puede no tener internet).
 - Archivo: `server/tui/parkuni_tui.py` (un solo archivo o paquete pequeño), ejecutable con `python3 server/tui/parkuni_tui.py`. Funciona en una terminal de 80×24 y se adapta si es más grande.
-- Colores con `curses` (verde = libre/OK, rojo = ocupado/error, amarillo = aviso). Si la terminal no soporta color, debe seguir siendo legible.
+- Colores con `curses` (verde = libre/OK, rojo = ocupado/error, naranja/amarillo = aviso). Si la terminal no soporta color, debe seguir siendo legible.
 - Se maneja con flechas, Enter, `q`/Esc para volver. Mostrar siempre una barra de ayuda con las teclas.
 - Debe tener `--check` (verifica sin abrir la interfaz: lee la base, consulta la API, imprime OK/FALLO) para poder probarlo.
 

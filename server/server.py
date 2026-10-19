@@ -108,7 +108,7 @@ def set_emergency(on, password):
         add_event("Intento de emergencia con contraseña incorrecta", "security")
         return False, "Contraseña incorrecta"
     kv_set("emergency", {"on": bool(on), "since": now if on else None})
-    add_event("⚠ EMERGENCIA ACTIVADA: LED en amarillo intermitente" if on else "Emergencia desactivada: LED normales", "emergency")
+    add_event("⚠ EMERGENCIA ACTIVADA: LED en morado intermitente" if on else "Emergencia desactivada: LED normales", "emergency")
     return True, "ok"
 
 

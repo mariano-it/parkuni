@@ -83,9 +83,9 @@ body.driver { position: fixed; inset: 0; background: var(--ground); user-select:
 
 .emergency-banner {
   position: absolute; left: 0; right: 0; top: 0; z-index: 4; padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
-  background: #f2c200; color: #1b1500; font-weight: 800; text-align: center; animation: emblink 1s steps(2, jump-none) infinite;
+  background: #7b2cbf; color: #fff; font-weight: 800; text-align: center; animation: emblink 1s steps(2, jump-none) infinite;
 }
-@keyframes emblink { 0% { background: #f2c200; } 50% { background: #ffe680; } 100% { background: #f2c200; } }
+@keyframes emblink { 0% { background: #7b2cbf; } 50% { background: #b06af0; } 100% { background: #7b2cbf; } }
 body.driver:has(.emergency-banner:not([hidden])) .banner { top: calc(58px + env(safe-area-inset-top)); }
 body.driver:has(.emergency-banner:not([hidden])) .fab.top { top: calc(70px + env(safe-area-inset-top)); }
 body.driver:has(.emergency-banner:not([hidden])) .fab.top2 { top: calc(128px + env(safe-area-inset-top)); }

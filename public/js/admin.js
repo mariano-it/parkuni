@@ -165,7 +165,7 @@ function renderEmergency(em) {
   S.emOn = on;
   $('emCard').classList.toggle('on', on);
   $('emState').textContent = on
-    ? `ACTIVA desde las ${fmtTime(em.since)} · los LED parpadean en amarillo`
+    ? `ACTIVA desde las ${fmtTime(em.since)} · los LED parpadean en morado`
     : 'Normal · los LED indican libre / ocupado';
   $('btnEm').textContent = on ? 'DESACTIVAR EMERGENCIA' : 'ACTIVAR EMERGENCIA';
   for (const m of maps) m.lot.emergency(on);

@@ -211,9 +211,9 @@ code { background: var(--bg); padding: 1px 5px; border-radius: 5px; font-size: 1
 .emergency form { display: flex; gap: 8px; flex-wrap: wrap; }
 .emergency input { width: 190px; margin: 0; }
 .emergency small { flex-basis: 100%; min-height: 1em; }
-.emergency.on { background: #f2c200; border-color: #c79c00; animation: emblink2 1s steps(2, jump-none) infinite; }
-.emergency.on h3, .emergency.on p { color: #1b1500; }
-@keyframes emblink2 { 50% { background: #ffe680; } }
+.emergency.on { background: #7b2cbf; border-color: #5a1d91; animation: emblink2 1s steps(2, jump-none) infinite; }
+.emergency.on h3, .emergency.on p { color: #fff; }
+@keyframes emblink2 { 50% { background: #b06af0; } }
 .btn.danger { background: var(--busy); border-color: var(--busy); color: #fff; }
 .mapseg { margin: 0; min-width: 190px; }
 .zoomgrid.single { grid-template-columns: minmax(0, 1fr); max-width: 1000px; }

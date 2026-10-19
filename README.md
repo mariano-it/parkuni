@@ -36,7 +36,7 @@ Se cambia con el selector del panel de administración o en ⚙ Ajustes → *Map
 
 ## 🚨 Emergencia / simulacro
 
-En el panel hay una tarjeta **Emergencia / simulacro**. Al activarla con la contraseña, **los LED RGB de todos los sensores parpadean en amarillo** (precaución) y la app de los conductores muestra un aviso con voz. Se desactiva con la misma contraseña y los LED vuelven a verde/rojo.
+En el panel hay una tarjeta **Emergencia / simulacro**. Al activarla con la contraseña, **los LED RGB de todos los sensores parpadean en morado** (emergencia) y la app de los conductores muestra un aviso con voz. Se desactiva con la misma contraseña y los LED vuelven a verde/rojo.
 
 - La contraseña se verifica **en el servidor** (no está en el código de la página). Para cambiar la que trae por defecto define `PARKUNI_EMERGENCY_PASSWORD` (ver `server/parkuni.service`).
 - 5 intentos fallidos bloquean la prueba durante un minuto y quedan en la bitácora.
@@ -71,7 +71,7 @@ Ficha técnica completa: [`docs/Ficha_Tecnica_Estacionamiento.docx`](docs/Ficha_
 \* Cada ECHO lleva un divisor de voltaje (1 kΩ en serie y 2 kΩ a GND) para bajar los 5 V del sensor a 3.3 V. Los sensores se alimentan del pin VIN (5 V); GND común para sensores, cátodos de los LED y divisores.
 
 Firmware:
-- [`firmware/parkuni/parkuni.ino`](firmware/parkuni/parkuni.ino) — **el de producción**: mide, pinta los LED, reporta al servidor y parpadea en amarillo en emergencia. Antes de cargarlo pon en `SERVER_URL` la IP del Ubuntu Server.
+- [`firmware/parkuni/parkuni.ino`](firmware/parkuni/parkuni.ino) — **el de producción**: mide, pinta los LED, reporta al servidor y parpadea en morado en emergencia. Antes de cargarlo pon en `SERVER_URL` la IP del Ubuntu Server.
 - [`firmware/prueba_hardware/prueba_hardware.ino`](firmware/prueba_hardware/prueba_hardware.ino) — el sketch original sin WiFi, para comprobar el cableado.
 
 El id de cada sensor se enlaza con su cajón en `MAP.sensors` de [`public/js/map-data.js`](public/js/map-data.js).

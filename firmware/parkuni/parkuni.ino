@@ -2,10 +2,10 @@
 //
 // Combina el cableado probado del prototipo (ver docs/Ficha_Tecnica_Estacionamiento.docx) con
 // el reporte al servidor Ubuntu:
-//   * LED: VERDE = libre, ROJO = ocupado (el azul no se usa).
+//   * LED: VERDE = libre, ROJO = ocupado (el azul solo se usa en la emergencia, junto al rojo = MORADO).
 //   * Cajón 1 = sensor AJ-SR04M impermeable (límite 50 cm); cajones 2-4 = HC-SR04 (límite 10 cm).
 //   * Reporta por HTTP al servidor (POST /api/sensor) y de la misma respuesta lee si hay EMERGENCIA:
-//     en ese caso los 4 LED parpadean en AMARILLO (rojo + verde) hasta que el administrador la desactive.
+//     en ese caso los 4 LED parpadean en MORADO (rojo + azul) hasta que el administrador la desactive.
 //   * Sin WiFi o sin servidor los LED siguen funcionando solos con los sensores.
 //
 // Cableado (no cambiar): ECHO por divisor de voltaje 1k + 2k (de 5 V a 3.3 V); sensores a VIN (5 V);
@@ -16,7 +16,7 @@
 
 // ======================= RED Y SERVIDOR =======================
 const char* WIFI_SSID  = "Anahuac";                                 // red abierta, sin contraseña
-const char* SERVER_URL = "http://192.168.1.50:8000/api/sensor";     // IP del Ubuntu Server
+const char* SERVER_URL = "http://172.20.5.57:8000/api/sensor";      // IP de la compu del servidor (cámbiala si cambia)
 
 const unsigned long SEND_MS    = 1500;   // cada cuánto se reporta al servidor
 const unsigned long MEASURE_MS = 600;    // cada cuánto se mide
@@ -51,7 +51,7 @@ void setColor(int i, bool r, bool g, bool b) {
 void updateLeds() {
   if (emergency) {
     bool on = (millis() / 500) % 2 == 0;                      // 1 s por ciclo
-    for (int i = 0; i < N; i++) setColor(i, on, on, false);   // amarillo = rojo + verde
+    for (int i = 0; i < N; i++) setColor(i, on, false, on);   // morado = rojo + azul
   } else {
     for (int i = 0; i < N; i++) {
       if (occupied[i]) setColor(i, true, false, false);       // ROJO  (ocupado)
