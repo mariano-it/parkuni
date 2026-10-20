@@ -21,6 +21,8 @@ Se cambia con el selector del panel de administración o en ⚙ Ajustes → *Map
 
 **App del conductor** (`index.html`)
 - Asignación del cajón libre más cercano respetando carriles de un solo sentido y la rotonda.
+- **Zona preferida**: al abrir la app te pregunta dónde prefieres estacionarte (o "Más cercana"), y lo puedes cambiar después desde la pantalla de inicio. Busca primero ahí; si no hay lugar, en las **zonas cercanas** (p. ej. Norte → Este y Acceso norte) y, al final, en cualquier otra. Las zonas cercanas se definen en `zoneNear` de `map-data.js`.
+- **Sin duplicados**: cada cajón se **reserva** en el servidor al asignarlo, así que dos conductores nunca reciben el mismo. Los cajones que ya lleva otro conductor se ven con borde punteado.
 - Mapa que gira con el auto e instrucciones tipo "Entra a la rotonda, salida 2 hacia Acceso norte, 89 m".
 - **Redirección automática** si el cajón asignado se ocupa en camino (en el campus, si no queda nada, manda a la Terrazería o a la zona de maestros).
 - **Velocidad por GPS** con alerta visual, sonora y de voz al pasar el límite.
@@ -47,7 +49,7 @@ En el panel hay una tarjeta **Emergencia / simulacro**. Al activarla con la cont
 ```mermaid
 flowchart LR
   S[Sensores ultrasónicos<br/>+ LED RGB] --> E[ESP32]
-  E -- POST /api/sensor --> V[(Ubuntu Server<br/>server.py + SQLite)]
+  E -- POST /api/sensor --> V[(Servidor Fedora<br/>server.py + SQLite)]
   V -- emergencia: sí/no --> E
   V -- /api/status cada 1 s --> D[App del conductor]
   V -- /api/status cada 1 s --> A[Panel admin]
@@ -71,7 +73,7 @@ Ficha técnica completa: [`docs/Ficha_Tecnica_Estacionamiento.docx`](docs/Ficha_
 \* Cada ECHO lleva un divisor de voltaje (1 kΩ en serie y 2 kΩ a GND) para bajar los 5 V del sensor a 3.3 V. Los sensores se alimentan del pin VIN (5 V); GND común para sensores, cátodos de los LED y divisores.
 
 Firmware:
-- [`firmware/parkuni/parkuni.ino`](firmware/parkuni/parkuni.ino) — **el de producción**: mide, pinta los LED, reporta al servidor y parpadea en morado en emergencia. Antes de cargarlo pon en `SERVER_URL` la IP del Ubuntu Server.
+- [`firmware/parkuni/parkuni.ino`](firmware/parkuni/parkuni.ino) — **el de producción**: mide, pinta los LED, reporta al servidor y parpadea en morado en emergencia. Antes de cargarlo pon en `SERVER_URL` la IP del servidor.
 - [`firmware/prueba_hardware/prueba_hardware.ino`](firmware/prueba_hardware/prueba_hardware.ino) — el sketch original sin WiFi, para comprobar el cableado.
 
 El id de cada sensor se enlaza con su cajón en `MAP.sensors` de [`public/js/map-data.js`](public/js/map-data.js).
@@ -94,11 +96,11 @@ El id de cada sensor se enlaza con su cajón en `MAP.sensors` de [`public/js/map
 │       └── admin.js           Panel de administración
 ├── server/
 │   ├── server.py              Servidor + API + SQLite (solo librería estándar)
-│   └── parkuni.service        Servicio systemd para Ubuntu
+│   └── parkuni.service        Servicio systemd para Fedora
 ├── firmware/
 │   ├── parkuni/               Firmware del ESP32 (sensores + LED + servidor)
 │   └── prueba_hardware/       Prueba del cableado sin WiFi
-├── docs/                      Ficha técnica del prototipo y guía de montaje en Ubuntu (MONTAJE_UBUNTU.md)
+├── docs/                      Ficha técnica del prototipo y guía de montaje en Fedora (MONTAJE_FEDORA.md)
 └── README.md
 ```
 
@@ -115,11 +117,13 @@ Sin ESP32 puedes probar todo: el panel permite forzar cajones y, en el campus, s
 curl -X POST localhost:8000/api/sensor -d '{"sensors":{"A1":{"occupied":true,"distance_cm":12}}}'
 ```
 
-### En el Ubuntu Server
+### En el servidor (Fedora)
+La guía paso a paso, pensada para que Claude Code la ejecute en la máquina, está en [`docs/MONTAJE_FEDORA.md`](docs/MONTAJE_FEDORA.md). En resumen:
 1. Copia el proyecto a `/opt/parkuni` y crea el usuario del servicio.
-2. Instala el servicio: `sudo cp server/parkuni.service /etc/systemd/system/`, edita rutas y contraseña, y `sudo systemctl enable --now parkuni`.
-3. (Opcional) Cloudflare Tunnel: `cloudflared tunnel --url http://localhost:8000` para tener https público.
-4. La base queda en `server/data/parkuni.db` (haz respaldo de ese archivo).
+2. Instala el servicio: `sudo cp server/parkuni.service /etc/systemd/system/`, edita rutas y contraseña (en `/etc/parkuni.env`), y `sudo systemctl enable --now parkuni`.
+3. **Abre el puerto 8000 en `firewalld`** solo para la red local (Fedora lo bloquea por defecto) y deja SELinux activo.
+4. (Opcional) Cloudflare Tunnel: `cloudflared tunnel --url http://localhost:8000` para tener https público.
+5. La base queda en `server/data/parkuni.db` (haz respaldo de ese archivo).
 
 ## 🗺️ Cómo está hecho el mapa
 
@@ -128,9 +132,10 @@ Los dos mapas están en [`map-data.js`](public/js/map-data.js):
 | Elemento | Qué es |
 |---|---|
 | `nodes` / `edges` | Red de **carriles de un solo sentido** (de `a` a `b`). El ruteo usa solo esto, así que nunca manda a nadie en contra. |
-| `segments` | Filas de cajones con su cantidad `n`. Id de cajón: `<fila>-<número>` (p. ej. `S05-12`). |
+| `segments` | Filas de cajones con su cantidad `n`. Id de cajón: `<fila>-<número>` (p. ej. `S05-12`). En las islas con filas espalda con espalda, cada fila declara el carril que la atiende (`lane`), para que la ruta nunca cruce otra fila de cajones. |
 | `sensors` | Qué sensor del ESP32 es qué cajón (`A1: 'P-1'`). |
 | `overflow` | (Campus) Terrazería y zona de maestros: último recurso, sin sensores. |
+| `uturn: true` | Cruces de vuelta en U permitidos (en el campus: camellón de la curva del acceso norte, que se mueve con `UTURN_AT`, y al inicio de la zona este, entre el carril superior y el pasillo de entrada). |
 | `simulate` | `false` en el prototipo: solo cuenta lo que miden los sensores. |
 
 El campus sale de un dibujo del estacionamiento (1920×1080 px, ≈ 0.2 m por píxel).
@@ -143,6 +148,7 @@ El campus sale de un dibujo del estacionamiento (1920×1080 px, ≈ 0.2 m por p�
 | `GET /api/status` | Apps | Estado completo (sensores, límite, conductores, emergencia; eventos con `?events`) |
 | `POST /api/emergency` | Panel | `{on, password}` activa o desactiva la emergencia |
 | `POST /api/config` · `/api/sim` · `/api/override` | Panel | Límite de velocidad, simulación y cajones forzados |
+| `POST /api/claim` | App | Reserva atómica de un cajón (`{id, spot}`); devuelve `ok: false` si otro conductor ya lo lleva |
 | `POST /api/driver` · `/api/event` | App | Latido del conductor y eventos |
 
 ## ⚠️ Pendientes y limitaciones

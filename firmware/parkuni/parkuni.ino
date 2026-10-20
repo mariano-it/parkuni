@@ -1,7 +1,7 @@
 // ParkUni — ESP32 con 4 sensores ultrasónicos y 4 LED RGB (prototipo).
 //
 // Combina el cableado probado del prototipo (ver docs/Ficha_Tecnica_Estacionamiento.docx) con
-// el reporte al servidor Ubuntu:
+// el reporte al servidor:
 //   * LED: VERDE = libre, ROJO = ocupado (el azul solo se usa en la emergencia, junto al rojo = MORADO).
 //   * Cajón 1 = sensor AJ-SR04M impermeable (límite 50 cm); cajones 2-4 = HC-SR04 (límite 10 cm).
 //   * Reporta por HTTP al servidor (POST /api/sensor) y de la misma respuesta lee si hay EMERGENCIA:

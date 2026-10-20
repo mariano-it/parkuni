@@ -25,6 +25,12 @@ const CAMPUS = (() => {
   const ringPt = (a) => arc(ring.cx, ring.cy, ring.r, ring.r, a, a, 1)[0];
   const ringMid = (a0, a1) => arc(ring.cx, ring.cy, ring.r, ring.r, a0, a1, 8).slice(1, -1);
 
+  // Curva del acceso norte: carril interior (sube hacia las zonas) y exterior (baja a la rotonda).
+  // En el camellón entre los dos hay una vuelta en U permitida (t = 240° sobre la curva).
+  const arcIn = arc(905, 250, 112, 102, 180, 270);        // 16 puntos, de 180° a 270° cada 6°
+  const arcOut = arc(905, 250, 153, 175, 270, 180);       // de 270° a 180°
+  const UTURN_AT = 10;                                    // índice en arcIn (180 + 6·10 = 240°); en arcOut es 15 - 10
+
   /* ---------- nodos ---------- */
   const nodes = {
     E0: P(250, 573),                              // ENTRADA al campus
@@ -32,7 +38,7 @@ const CAMPUS = (() => {
     RW_in: ringPt(146), RS_out: ringPt(93), RS_in: ringPt(64), RE: ringPt(0),
     RN_out: ringPt(-66), RN_in: ringPt(-97), RW_out: ringPt(-176),
     // zona norte / este
-    NT_in: P(905, 148), NT_out: P(905, 75), M1: P(1290, 146), NEE: P(1762, 135), NE_N: P(1735, 74),
+    NT_in: P(905, 148), NT_out: P(905, 75), UI: arcIn[UTURN_AT], UO: arcOut[15 - UTURN_AT], M1: P(1290, 146), NEE: P(1762, 135), NE_N: P(1735, 74), UTW: P(1290, 74.5),
     EC: P(1815, 232), W2s: P(1700, 218), J: P(1285, 218), Y3s: P(1340, 310), E3: P(1742, 310),
     EM: P(1775, 313), MAESTROS: P(1787, 352),
     // zona sur
@@ -44,7 +50,7 @@ const CAMPUS = (() => {
 
   /* ---------- carriles (un sentido) ---------- */
   const edges = [];
-  const E = (id, a, b, mid = [], o = {}) => edges.push({ id, a, b, mid, name: o.name || '', ring: !!o.ring, dest: !!o.dest });
+  const E = (id, a, b, mid = [], o = {}) => edges.push({ id, a, b, mid, name: o.name || '', ring: !!o.ring, dest: !!o.dest, uturn: !!o.uturn });
 
   E('w_in', 'E0', 'RW_in', [], { name: 'Acceso' });
   E('w_out', 'RW_out', 'X0', [], { name: 'Salida' });
@@ -58,14 +64,23 @@ const CAMPUS = (() => {
   E('ring7', 'RW_out', 'RW_in', ringMid(-176, -214), R);
 
   // camino al norte: sube por el carril derecho (x≈793) y baja por el izquierdo (x≈752)
-  E('n_up', 'RN_out', 'NT_in', arc(905, 250, 112, 102, 180, 270).slice(0, -1), { name: 'Acceso norte' });
-  E('n_down', 'NT_out', 'RN_in', arc(905, 250, 153, 175, 270, 180).slice(1), { name: 'Acceso norte' });
+  E('n_up1', 'RN_out', 'UI', arcIn.slice(0, UTURN_AT), { name: 'Acceso norte' });
+  E('n_up2', 'UI', 'NT_in', arcIn.slice(UTURN_AT + 1, -1), { name: 'Acceso norte' });
+  E('n_down1', 'NT_out', 'UO', arcOut.slice(1, 15 - UTURN_AT), { name: 'Acceso norte' });
+  E('n_down2', 'UO', 'RN_in', arcOut.slice(15 - UTURN_AT + 1), { name: 'Acceso norte' });
+  // vuelta en U permitida en el camellón, en los dos sentidos
+  E('uturn_in', 'UI', 'UO', [], { name: 'Vuelta en U', uturn: true });
+  E('uturn_out', 'UO', 'UI', [], { name: 'Vuelta en U', uturn: true });
 
   // zona norte (arriba izquierda) y zona este (arriba derecha): circuito de un solo sentido
   E('tl_east', 'NT_in', 'M1', [], { name: 'Zona Norte' });
   E('east1', 'M1', 'NEE', [P(1335, 135)], { name: 'Zona Este' });
   E('ne_loop', 'NEE', 'NE_N', [P(1785, 118), P(1790, 95), P(1770, 80)], { name: 'Zona Este' });
-  E('top_w', 'NE_N', 'NT_out', [], { name: 'Carril superior' });
+  E('top_w1', 'NE_N', 'UTW', [], { name: 'Carril superior' });
+  E('top_w2', 'UTW', 'NT_out', [], { name: 'Carril superior' });
+  // vuelta en U permitida entre el carril superior (hacia el oeste) y el inicio de la zona este (hacia el este)
+  E('uturn_e1', 'M1', 'UTW', [], { name: 'Vuelta en U', uturn: true });
+  E('uturn_e2', 'UTW', 'M1', [], { name: 'Vuelta en U', uturn: true });
   E('east_down', 'NEE', 'EC', [P(1800, 165), P(1812, 200)], { name: 'Zona Este' });   // supuesto: confirmar
   E('west2_in', 'EC', 'W2s', [P(1790, 214), P(1757, 205)], { name: 'Zona Este' });
   E('west2', 'W2s', 'J', [], { name: 'Zona Este' });
@@ -113,40 +128,40 @@ const CAMPUS = (() => {
   S('AN4', 'Acceso norte', 1, V(736, 401, 426));
   S('DIS', 'Acceso norte', 2, [P(863, 68), P(902, 54)], { type: 'disabled' });
 
-  S('N01', 'Zona Norte', 6, H(913, 1010, 55), { ang: '\\' });
-  S('N02', 'Zona Norte', 10, H(1059, 1150, 54), { ang: '\\' });
-  S('N03', 'Zona Norte', 13, H(1169, 1228, 52), { ang: '\\' });
-  S('N04', 'Zona Norte', 5, H(936, 1012, 112), { ang: '/' });
-  S('N05', 'Zona Norte', 10, H(1059, 1150, 111), { ang: '/' });
-  S('N06', 'Zona Norte', 13, H(1169, 1227, 111), { ang: '/' });
-  S('N07', 'Zona Norte', 5, H(938, 1014, 128), { ang: '/' });
-  S('N08', 'Zona Norte', 10, H(1059, 1147, 129), { ang: '/' });
-  S('N09', 'Zona Norte', 13, H(1169, 1228, 131), { ang: '/' });
-  S('N10', 'Zona Norte', 5, H(934, 1010, 191), { ang: '\\' });
-  S('N11', 'Zona Norte', 10, H(1060, 1148, 193), { ang: '\\' });
+  S('N01', 'Zona Norte', 6, H(913, 1010, 55), { lane: 'top_w2', ang: '\\' });
+  S('N02', 'Zona Norte', 10, H(1059, 1150, 54), { lane: 'top_w2', ang: '\\' });
+  S('N03', 'Zona Norte', 13, H(1169, 1228, 52), { lane: 'top_w2', ang: '\\' });
+  S('N04', 'Zona Norte', 5, H(936, 1012, 112), { lane: 'top_w2', ang: '/' });
+  S('N05', 'Zona Norte', 10, H(1059, 1150, 111), { lane: 'top_w2', ang: '/' });
+  S('N06', 'Zona Norte', 13, H(1169, 1227, 111), { lane: 'top_w2', ang: '/' });
+  S('N07', 'Zona Norte', 5, H(938, 1014, 128), { lane: 'tl_east', ang: '/' });
+  S('N08', 'Zona Norte', 10, H(1059, 1147, 129), { lane: 'tl_east', ang: '/' });
+  S('N09', 'Zona Norte', 13, H(1169, 1228, 131), { lane: 'tl_east', ang: '/' });
+  S('N10', 'Zona Norte', 5, H(934, 1010, 191), { lane: 'tl_east', ang: '\\' });
+  S('N11', 'Zona Norte', 10, H(1060, 1148, 193), { lane: 'tl_east', ang: '\\' });
 
-  S('E01', 'Zona Este', 20, H(1256, 1631, 54), { ang: '\\' });
-  S('E02', 'Zona Este', 7, H(1332, 1439, 91), { ang: '/' });
-  S('E03', 'Zona Este', 7, H(1334, 1441, 108), { ang: '/' });
-  S('E04', 'Zona Este', 9, H(1520, 1627, 90), { ang: '/' });
-  S('E05', 'Zona Este', 9, H(1524, 1631, 107), { ang: '/' });
-  S('E06', 'Zona Este', 4, H(1687, 1726, 92), { ang: '/' });
-  S('E07', 'Zona Este', 4, H(1696, 1722, 105), { ang: '/' });
-  S('E08', 'Zona Este', 7, H(1332, 1439, 155), { ang: '\\' });
-  S('E09', 'Zona Este', 7, H(1333, 1440, 173), { ang: '\\' });
-  S('E10', 'Zona Este', 9, H(1523, 1630, 156), { ang: '\\' });
-  S('E11', 'Zona Este', 9, H(1523, 1630, 175), { ang: '\\' });
-  S('E12', 'Zona Este', 5, H(1684, 1751, 157), { ang: '\\' });
-  S('E13', 'Zona Este', 5, H(1684, 1751, 174), { ang: '\\' });
-  S('E14', 'Zona Este', 7, H(1334, 1442, 262), { ang: '/' });
-  S('E15', 'Zona Este', 7, H(1334, 1441, 278), { ang: '/' });
-  S('E16', 'Zona Este', 9, H(1523, 1630, 264), { ang: '/' });
-  S('E17', 'Zona Este', 9, H(1520, 1627, 283), { ang: '/' });
-  S('E18', 'Zona Este', 17, H(1684, 1791, 261), { ang: '/' });
-  S('E19', 'Zona Este', 17, H(1686, 1793, 281), { ang: '/' });
-  S('E20', 'Zona Este', 10, H(1256, 1441, 338));
-  S('E21', 'Zona Este', 9, H(1521, 1628, 342));
-  S('E22', 'Zona Este', 1, H(1683, 1731, 344), { ang: '\\' });
+  S('E01', 'Zona Este', 20, H(1256, 1631, 54), { lane: ['top_w1', 'top_w2'], ang: '\\' });
+  S('E02', 'Zona Este', 7, H(1332, 1439, 91), { lane: 'top_w1', ang: '/' });
+  S('E03', 'Zona Este', 7, H(1334, 1441, 108), { lane: 'east1', ang: '/' });
+  S('E04', 'Zona Este', 9, H(1520, 1627, 90), { lane: 'top_w1', ang: '/' });
+  S('E05', 'Zona Este', 9, H(1524, 1631, 107), { lane: 'east1', ang: '/' });
+  S('E06', 'Zona Este', 4, H(1687, 1726, 92), { lane: 'top_w1', ang: '/' });
+  S('E07', 'Zona Este', 4, H(1696, 1722, 105), { lane: 'east1', ang: '/' });
+  S('E08', 'Zona Este', 7, H(1332, 1439, 155), { lane: 'east1', ang: '\\' });
+  S('E09', 'Zona Este', 7, H(1333, 1440, 173), { lane: 'west2', ang: '\\' });
+  S('E10', 'Zona Este', 9, H(1523, 1630, 156), { lane: 'east1', ang: '\\' });
+  S('E11', 'Zona Este', 9, H(1523, 1630, 175), { lane: 'west2', ang: '\\' });
+  S('E12', 'Zona Este', 5, H(1684, 1751, 157), { lane: 'east1', ang: '\\' });
+  S('E13', 'Zona Este', 5, H(1684, 1751, 174), { lane: ['west2', 'west2_in'], ang: '\\' });
+  S('E14', 'Zona Este', 7, H(1334, 1442, 262), { lane: 'west2', ang: '/' });
+  S('E15', 'Zona Este', 7, H(1334, 1441, 278), { lane: 'south_e', ang: '/' });
+  S('E16', 'Zona Este', 9, H(1523, 1630, 264), { lane: 'west2', ang: '/' });
+  S('E17', 'Zona Este', 9, H(1520, 1627, 283), { lane: 'south_e', ang: '/' });
+  S('E18', 'Zona Este', 17, H(1684, 1791, 261), { lane: ['west2', 'west2_in'], ang: '/' });
+  S('E19', 'Zona Este', 17, H(1686, 1793, 281), { lane: ['south_e', 'east_up_a'], ang: '/' });
+  S('E20', 'Zona Este', 10, H(1256, 1441, 338), { lane: ['south_e', 'j_down'] });
+  S('E21', 'Zona Este', 9, H(1521, 1628, 342), { lane: 'south_e' });
+  S('E22', 'Zona Este', 1, H(1683, 1731, 344), { lane: 'south_e', ang: '\\' });
   S('E23', 'Zona Este', 10, [P(1637, 51), P(1660, 50), P(1700, 51), P(1740, 58), P(1781, 77), P(1806, 99)]);
   S('E24', 'Zona Este', 2, [P(1822, 135), P(1834, 170)]);
   S('E25', 'Zona Este', 2, [P(1843, 193), P(1856, 230)]);
@@ -214,13 +229,22 @@ const CAMPUS = (() => {
     { t: 'ZONA SUR', x: 690, y: 1050, big: true }, { t: 'ACCESO NORTE', x: 660, y: 300 },
   ];
 
+  // Zonas cercanas a cada una: si no hay lugar en la zona preferida, se busca primero aquí.
+  const zoneNear = {
+    'Zona Norte': ['Zona Este', 'Acceso norte'],
+    'Zona Este': ['Zona Norte', 'Acceso norte'],
+    'Acceso norte': ['Zona Norte', 'Zona Este', 'Acceso'],
+    'Acceso': ['Acceso norte', 'Zona Sur'],
+    'Zona Sur': ['Acceso', 'Acceso norte'],
+  };
+
   const bounds = { x: 190, y: 15, w: 1700, h: 1050 };
   const entry = { edge: 'w_in', s: 0 };
 
   return {
     id: 'campus', title: 'Estacionamiento Campus', metersPerPx: 0.2, simulate: true, demoSpeed: 20,
     style: { depth: 14, maxW: 14, lane: 42, chevGap: 95, followZoom: 1.7 },
-    nodes, edges, segments, sensors, overflow, ring, surfaces, crosswalks, buildings, nopark, busbay, labels, bounds, entry,
+    nodes, edges, segments, sensors, overflow, ring, surfaces, crosswalks, buildings, nopark, busbay, labels, bounds, entry, zoneNear,
   };
 })();
 

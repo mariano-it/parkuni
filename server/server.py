@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Servidor de ParkUni (solo librería estándar de Python; pensado para Ubuntu Server).
+"""Servidor de ParkUni (solo librería estándar de Python; pensado para un servidor Linux, p. ej. Fedora).
 
   python3 server/server.py                 # http://0.0.0.0:8000
   python3 server/server.py --port 80
@@ -10,6 +10,7 @@ Hace tres cosas:
   2. Guarda el estado en SQLite (server/data/parkuni.db): sensores, cajones forzados, simulación,
      límite de velocidad, eventos y el estado de emergencia.
   3. Recibe los datos del ESP32 (POST /api/sensor) y le contesta si hay emergencia activa.
+  4. Reserva cajones para los conductores (POST /api/claim) para no mandar a dos al mismo.
 
 Variables de entorno:
   PARKUNI_EMERGENCY_PASSWORD   contraseña para activar/desactivar la emergencia (por defecto: anahuac2027)
@@ -171,6 +172,15 @@ class Handler(SimpleHTTPRequestHandler):
                         add_event(f"Sensor {sid}: {'ocupado' if occ else 'liberado'}", "sensor")
                 DB.commit()
                 return self._json({"ok": True, "emergency": emergency_state()["on"]})
+            if p == "/api/claim":
+                # Reserva atómica de un cajón: dos conductores nunca reciben el mismo.
+                me, spot, now = str(d.get("id"))[:20], str(d.get("spot") or "")[:32], time.time()
+                for k, dr in DRIVERS.items():
+                    if k != me and dr.get("target") == spot and now - dr["t"] <= DRIVER_TTL:
+                        return self._json({"ok": False, "taken_by": k})
+                cur = DRIVERS.get(me, {"x": None, "y": None, "speed": None})
+                DRIVERS[me] = {**cur, "target": spot, "t": now}
+                return self._json({"ok": True})
             if p == "/api/emergency":
                 ok, msg = set_emergency(bool(d.get("on")), d.get("password"))
                 return self._json({"ok": ok, "error": None if ok else msg, "emergency": emergency_state()},

@@ -45,7 +45,7 @@ const G = (() => {
   /* ---- punto más cercano a la red ---- */
   function project(x, y, o = {}) {
     let best = null;
-    const list = o.edges ? o.edges.map((id) => byId[id]) : edges.filter((e) => !e.dest);
+    const list = o.edges ? o.edges.map((id) => byId[id]) : edges.filter((e) => !e.dest && !(o.access && e.uturn));
     for (const e of list) {
       for (let i = 1; i < e.pts.length; i++) {
         const a = e.pts[i - 1], b = e.pts[i], dx = b.x - a.x, dy = b.y - a.y, L2 = dx * dx + dy * dy || 1;
@@ -118,6 +118,8 @@ const G = (() => {
       const cur = byId[P[i].edge], nxt = byId[P[i + 1].edge];
       const delta = angleDiff(headingAt(nxt, 0, 14, true), headingAt(cur, P[i].s1, 14, false));
       const key = `${cur.id}>${nxt.id}`;
+      if (cur.uturn) continue;                                   // la vuelta ya se anunció al entrar
+      if (nxt.uturn) { list.push({ d, key, glyph: '↶', verb: 'Da la vuelta en U', text: 'Da la vuelta en U' }); continue; }
       if (cur.ring && nxt.ring) continue;
       if (!cur.ring && nxt.ring) {
         let k = 0, exitName = '';
@@ -174,7 +176,7 @@ for (const seg of MAP.segments) {
     const a = pts[i - 1], b = pts[i], L = cum[i] - cum[i - 1] || 1, t = (s - cum[i - 1]) / L;
     const x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
     let tx = (b.x - a.x) / L, ty = (b.y - a.y) / L;
-    const access = G.project(x, y, seg.lane ? { edges: [seg.lane] } : {});
+    const access = G.project(x, y, seg.lane ? { edges: [].concat(seg.lane), access: true } : { access: true });
     // la normal apunta hacia el carril que atiende al cajón
     let nx = -ty, ny = tx;
     if (nx * (access.x - x) + ny * (access.y - y) < 0) { nx = -nx; ny = -ny; }
@@ -231,16 +233,23 @@ const Occ = {
 };
 
 /* =================== elección de destino =================== */
-// Mejor cajón libre desde `pos` (el de menor recorrido). Si no hay, la zona de último recurso más cercana.
-function bestTarget(pos, excludeId) {
+// Mejor cajón libre desde `pos` (el de menor recorrido).
+//  - exclude: cajones que no se pueden asignar (el que se acaba de ocupar, los que ya lleva otro conductor…)
+//  - pref: zona preferida. Orden de búsqueda: 1) esa zona, 2) zonas cercanas (MAP.zoneNear), 3) cualquier otra.
+//    Dentro de cada nivel se elige el cajón más cercano por ruta.
+// Si no queda ninguno, la zona de último recurso más cercana.
+function bestTarget(pos, exclude, pref) {
+  const skip = exclude instanceof Set ? exclude : new Set([].concat(exclude || []));
+  const near = (pref && MAP.zoneNear && MAP.zoneNear[pref]) || [];
+  const tier = (z) => (!pref || z === pref ? 0 : near.includes(z) ? 1 : 2);
   const cost = G.coster(pos);
-  let best = null, bestC = Infinity;
+  let best = null, bestT = 9, bestC = Infinity;
   for (const sp of SPOTS) {
-    if (sp.type === 'disabled' || sp.id === excludeId || !Occ.isFree(sp.id)) continue;
-    const c = cost(sp.access);
-    if (c < bestC) { best = sp; bestC = c; }
+    if (sp.type === 'disabled' || skip.has(sp.id) || !Occ.isFree(sp.id)) continue;
+    const t = tier(sp.zone), c = cost(sp.access);
+    if (t < bestT || (t === bestT && c < bestC)) { best = sp; bestT = t; bestC = c; }
   }
-  if (best) return { kind: 'spot', id: best.id };
+  if (best) return { kind: 'spot', id: best.id, tier: bestT };
   let o = null, oc = Infinity;
   for (const z of OVERFLOW) { const c = cost(z.access); if (c < oc) { o = z; oc = c; } }
   return o ? { kind: 'overflow', id: o.id } : null;

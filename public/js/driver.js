@@ -21,11 +21,17 @@ const S = {
   view: 'follow',                  // 'follow' | 'overview'
   voice: true,
   emergency: false,
+  pref: null,                      // zona preferida (null = la más cercana)
+  claiming: false,
   id: Math.random().toString(36).slice(2, 8),
 };
 S.car = G.pointAt(G.byId[S.pos.edge], S.pos.s);
 S.heading = S.car.a;
 
+try {                                                    // última zona preferida (solo si el mapa tiene varias)
+  const p = localStorage.getItem('parkuni.pref');
+  if (p && ZONES.includes(p)) S.pref = p;
+} catch {}
 const svg = $('map');
 const lot = drawMap(svg);
 const routeLine = el('polyline', { id: 'route', points: '' });
@@ -154,35 +160,70 @@ function setTarget(t) {
   renderStatic();
 }
 
-function startNav() {
+/* ---------- elegir y RESERVAR el destino ---------- */
+// Cajones que otros conductores ya llevan como destino (vienen en el estado compartido).
+function takenByOthers() {
+  return new Set((S.st.drivers || []).filter((x) => x.id !== S.id && x.target).map((x) => x.target));
+}
+// Elige el mejor cajón y lo reserva en el servidor. Si otro conductor lo reservó justo antes
+// (la reserva es atómica), se prueba con el siguiente mejor. Dos conductores nunca reciben el mismo.
+async function pickTarget(excludeIds = []) {
+  const skip = new Set(excludeIds);
+  for (const id of takenByOthers()) skip.add(id);
+  for (let k = 0; k < 8; k++) {
+    const t = bestTarget(S.pos, skip, S.pref);
+    if (!t || t.kind !== 'spot') return t;                // zona de último recurso o lleno: sin exclusividad
+    try {
+      const r = await api('/api/claim', { id: S.id, spot: t.id });
+      if (r.ok !== false) return t;                        // reservado para mí
+      skip.add(t.id);                                      // otro lo tomó antes: siguiente
+    } catch { return t; }                                  // sin servidor: se sigue sin reserva
+  }
+  return bestTarget(S.pos, skip, S.pref);
+}
+const offPref = (t) => !!(S.pref && t && t.kind === 'spot' && SPOT_BY_ID[t.id].zone !== S.pref);
+
+async function startNav() {
   beep();                                                 // desbloquea el audio con el gesto del usuario
-  if (S.mode === 'demo' && !S.nav) resetCar();
-  const t = bestTarget(S.pos);
-  if (!t) { toast('Estacionamiento lleno por ahora', true); speak('El estacionamiento está lleno', 'reroute'); return; }
-  setTarget(t);
-  S.view = 'follow';
-  if (t.kind === 'spot') speak(`Te asignamos ${targetSay(t)}`);
-  else { toast('No hay cajones libres: te enviamos a ' + targetLabel(t), true); speak(`No hay cajones libres. Te enviamos a ${targetLabel(t)}`, 'reroute'); }
-  sendEvent('nav', `Conductor ${S.id} → ${t.id}`);
+  if (S.claiming) return;
+  S.claiming = true;
+  try {
+    if (S.mode === 'demo' && !S.nav) resetCar();
+    const t = await pickTarget();
+    if (!t) { toast('Estacionamiento lleno por ahora', true); speak('El estacionamiento está lleno', 'reroute'); return; }
+    setTarget(t);
+    S.view = 'follow';
+    if (t.kind === 'spot') {
+      if (offPref(t)) {
+        toast(`Sin lugares en ${S.pref}: te mandamos a ${SPOT_BY_ID[t.id].zone}, cerca`, true);
+        speak(`No hay lugares en ${S.pref}. Te asignamos ${targetSay(t)}, cerca de tu zona`);
+      } else speak(`Te asignamos ${targetSay(t)}`);
+    } else { toast('No hay cajones libres: te enviamos a ' + targetLabel(t), true); speak(`No hay cajones libres. Te enviamos a ${targetLabel(t)}`, 'reroute'); }
+    sendEvent('nav', `Conductor ${S.id} → ${t.id}`);
+  } finally { S.claiming = false; }
 }
 
-function reroute(lostId) {
-  const t = bestTarget(S.pos, lostId);
-  if (!t) {
-    endNav();
-    toast(`Tu cajón ${lostId} fue ocupado y ya no quedan lugares`, true);
-    speak('Tu cajón fue ocupado y ya no quedan lugares libres', 'reroute');
-    return;
-  }
-  setTarget(t);
-  if (t.kind === 'spot') {
-    toast(`Tu cajón ${lostId} fue ocupado. Nuevo destino: ${t.id}`, true);
-    speak(`Tu cajón fue ocupado. Redirigiendo a ${targetSay(t)}`, 'reroute');
-  } else {
-    toast(`Tu cajón ${lostId} fue ocupado y no quedan lugares. Te enviamos a ${targetLabel(t)}`, true);
-    speak(`Tu cajón fue ocupado y no quedan lugares libres. Te enviamos a ${targetLabel(t)}`, 'reroute');
-  }
-  sendEvent('reroute', `Conductor ${S.id}: ${lostId} ocupado → ${t.id}`);
+async function reroute(lostId) {
+  if (S.claiming) return;
+  S.claiming = true;
+  try {
+    const t = await pickTarget([lostId]);
+    if (!t) {
+      endNav();
+      toast(`Tu cajón ${lostId} fue ocupado y ya no quedan lugares`, true);
+      speak('Tu cajón fue ocupado y ya no quedan lugares libres', 'reroute');
+      return;
+    }
+    setTarget(t);
+    if (t.kind === 'spot') {
+      toast(`Tu cajón ${lostId} fue ocupado. Nuevo destino: ${t.id}`, true);
+      speak(`Tu cajón fue ocupado. Redirigiendo a ${targetSay(t)}`, 'reroute');
+    } else {
+      toast(`Tu cajón ${lostId} fue ocupado y no quedan lugares. Te enviamos a ${targetLabel(t)}`, true);
+      speak(`Tu cajón fue ocupado y no quedan lugares libres. Te enviamos a ${targetLabel(t)}`, 'reroute');
+    }
+    sendEvent('reroute', `Conductor ${S.id}: ${lostId} ocupado → ${t.id}`);
+  } finally { S.claiming = false; }
 }
 
 function endNav() {
@@ -275,10 +316,14 @@ function renderStatic() {
   setText('idleTitle', MAP.title);
   setText('freeN', Occ.total.free);
   $('freeN').parentElement.classList.toggle('full', Occ.total.free === 0);
-  $('areas').innerHTML = ZONES.map((z) => {
-    const c = Occ.counts[z];
-    return `<span class="chip ${c.free ? '' : 'zero'}">${z.replace('Zona ', '')}: <b>${c.free}</b>/${c.total}</span>`;
-  }).join('');
+  const multi = ZONES.length > 1;
+  if (!$('prefModal').hidden) renderPrefList();
+  $('prefHint').hidden = !multi;
+  $('areas').innerHTML = (multi ? `<button type="button" class="chip pick ${S.pref ? '' : 'sel'}" data-zone="">Más cercana</button>` : '') +
+    ZONES.map((z) => {
+      const c = Occ.counts[z];
+      return `<button type="button" class="chip ${multi ? 'pick' : ''} ${c.free ? '' : 'zero'} ${S.pref === z ? 'sel' : ''}" data-zone="${z}">${z.replace('Zona ', '')}: <b>${c.free}</b>/${c.total}</button>`;
+    }).join('');
 
   $('sheetIdle').hidden = !!S.nav;
   $('sheetNav').hidden = !S.nav;
@@ -290,7 +335,8 @@ function renderStatic() {
     setText('nArea', sp ? sp.zone : 'Último recurso');
     setText('nSlot', sp ? spotShort(sp) : targetLabel(t));
     setText('nNote', !sp ? 'Sin sensores en esta zona: confirma al llegar.'
-      : Occ.get(sp.id).src === 'sensor' ? '● Cajón con sensor en vivo' : 'Disponibilidad simulada (demo)');
+      : offPref(t) ? `Cerca de tu zona preferida (${S.pref}) · cajón reservado para ti`
+      : Occ.get(sp.id).src === 'sensor' ? '● Cajón con sensor en vivo · reservado para ti' : 'Disponibilidad simulada (demo) · reservado para ti');
     $('btnPark').hidden = !S.nav.arrived;
   }
   $('modeHint').textContent = S.mode === 'demo'
@@ -390,21 +436,29 @@ function applyStatus(st) {
   applyEmergency(st.emergency);
   S.limit = st.speedLimit ?? S.limit;
   Occ.compute(st);
+  lot.setReserved(takenByOthers());
   lot.setOcc(Occ.map);
   const n = S.nav;
-  if (n && !n.arrived) {
+  if (n && !n.arrived && !S.claiming) {
     if (n.target.kind === 'spot' && !Occ.isFree(n.target.id)) { reroute(n.target.id); return; }
     if (n.target.kind === 'overflow') {                 // ¿se liberó algo mientras voy a la zona de último recurso?
-      const b = bestTarget(S.pos);
-      if (b && b.kind === 'spot') {
-        setTarget(b);
-        toast(`Se liberó un cajón: ${targetLabel(b)}`);
-        speak(`Se liberó un cajón. Redirigiendo a ${targetSay(b)}`, 'reroute');
-        return;
-      }
+      const b = bestTarget(S.pos, takenByOthers(), S.pref);
+      if (b && b.kind === 'spot') { switchToFreed(); return; }
     }
   }
   renderStatic();
+}
+async function switchToFreed() {
+  if (S.claiming) return;
+  S.claiming = true;
+  try {
+    const b = await pickTarget();
+    if (b && b.kind === 'spot') {
+      setTarget(b);
+      toast(`Se liberó un cajón: ${targetLabel(b)}`);
+      speak(`Se liberó un cajón. Redirigiendo a ${targetSay(b)}`, 'reroute');
+    }
+  } finally { S.claiming = false; }
 }
 async function poll() {
   try { S.online = true; applyStatus(await api('/api/status')); } catch { S.online = false; }
@@ -415,8 +469,34 @@ setInterval(() => {
 }, 1000);
 addEventListener('pagehide', () => { api('/api/driver/leave', { id: S.id }).catch(() => {}); });
 
+/* ---------- elegir zona al abrir la app ---------- */
+function renderPrefList() {
+  $('prefList').innerHTML = `<button type="button" class="zbtn any" data-zone=""><b>Más cercana</b><span>cualquier zona</span></button>` +
+    ZONES.map((z) => {
+      const c = Occ.counts[z];
+      return `<button type="button" class="zbtn ${c.free ? '' : 'zero'} ${S.pref === z ? 'sel' : ''}" data-zone="${z}"><b>${z}</b><span>${c.free} libres de ${c.total}</span></button>`;
+    }).join('');
+}
+function setPref(zone) {
+  S.pref = zone || null;
+  try { S.pref ? localStorage.setItem('parkuni.pref', S.pref) : localStorage.removeItem('parkuni.pref'); } catch {}
+  $('prefModal').hidden = true;
+  renderStatic();
+}
+$('prefList').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-zone]');
+  if (b) setPref(b.dataset.zone);
+});
+
 /* ---------- eventos de UI ---------- */
 $('btnGo').onclick = startNav;
+$('areas').addEventListener('click', (e) => {            // elegir zona preferida antes de entrar
+  const b = e.target.closest('[data-zone]');
+  if (!b || ZONES.length < 2) return;
+  S.pref = b.dataset.zone || null;
+  try { S.pref ? localStorage.setItem('parkuni.pref', S.pref) : localStorage.removeItem('parkuni.pref'); } catch {}
+  renderStatic();
+});
 $('btnCancel').onclick = endNav;
 $('btnPark').onclick = () => {
   const t = S.nav.target;
@@ -470,6 +550,7 @@ function frame(ts) {
 }
 Occ.compute(S.st);
 lot.setOcc(Occ.map);
+if (ZONES.length > 1) { renderPrefList(); $('prefModal').hidden = false; }   // antes de entrar: ¿dónde prefieres estacionarte?
 $('demoSpeed').value = S.demoSpeed;
 renderStatic();
 stepCamera(0, true);

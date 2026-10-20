@@ -85,10 +85,11 @@ function drawMap(svg, { titles = false, only = null } = {}) {
     emergency(on) { svg.classList.toggle('emergency', !!on); },
     // map: Occ.map  (id → { occ, src })
     setOcc(map) {
+      this.lastMap = map;
       for (const sp of SPOTS) {
         const o = map.get(sp.id) || { occ: null, src: 'none' };
         const cls = 'spot ' + (o.occ === null ? 'none' : o.occ ? 'busy' : 'free') + (o.src === 'sim' ? ' sim' : '')
-          + (sp.type === 'disabled' ? ' dis' : '') + (sp.sensor ? ' hw' : '') + (sp.id === this._target ? ' target' : '');
+          + (sp.type === 'disabled' ? ' dis' : '') + (sp.sensor ? ' hw' : '') + (this._resv.has(sp.id) ? ' resv' : '') + (sp.id === this._target ? ' target' : '');
         const s = spotEls[sp.id];
         if (!s) continue;
         if (s.cls !== cls) { s.el.setAttribute('class', cls); s.cls = cls; }
@@ -110,6 +111,9 @@ function drawMap(svg, { titles = false, only = null } = {}) {
       pin.style.display = spot ? '' : 'none';
       if (spot) pin.setAttribute('transform', `translate(${spot.x + spot.nx * ST.depth / 2} ${spot.y + spot.ny * ST.depth / 2}) scale(${ST.lane / 42})`);
     },
+    // cajones que otros conductores ya van a ocupar (se dibujan con borde punteado)
+    setReserved(set) { this._resv = set; if (this.lastMap) this.setOcc(this.lastMap); },
+    _resv: new Set(),
     _target: null,
   };
 }

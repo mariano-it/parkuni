@@ -82,7 +82,8 @@ for (const m of maps) m.svg.addEventListener('click', (e) => {
 
 function render(st) {
   Occ.compute(st);
-  for (const m of maps) m.lot.setOcc(Occ.map);
+  const reserved = new Set(st.drivers.map((dr) => dr.target));
+  for (const m of maps) { m.lot.setReserved(reserved); m.lot.setOcc(Occ.map); }
   const t = Occ.total, busy = t.total - t.free;
   $('kFree').textContent = t.free;
   $('kBusy').textContent = busy;

@@ -1,4 +1,5 @@
-# Servicio systemd para Ubuntu Server.
+# Servicio systemd para el servidor (Fedora).
+# Guía completa: docs/MONTAJE_FEDORA.md
 #   sudo cp server/parkuni.service /etc/systemd/system/
 #   sudo nano /etc/systemd/system/parkuni.service      # ajusta las rutas y la contraseña
 #   sudo systemctl daemon-reload && sudo systemctl enable --now parkuni
