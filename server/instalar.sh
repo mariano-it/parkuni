@@ -42,6 +42,9 @@ if [ ! -e /etc/parkuni.env ]; then
 #PARKUNI_ADMIN_PASSWORD=
 # Contraseña para activar / desactivar la emergencia. Sin ella la emergencia queda bloqueada.
 #PARKUNI_EMERGENCY_PASSWORD=
+# Contraseña ÚNICA del apagado de emergencia informática (detiene el servidor y no deja que vuelva a arrancar solo).
+# Distinta de las dos anteriores. Sin ella el apagado no está disponible.
+#PARKUNI_KILL_PASSWORD=
 # Opcional: 1 = el panel solo se puede abrir desde esta misma laptop (127.0.0.1), no desde la red.
 #PARKUNI_ADMIN_LOCAL_ONLY=1
 EOF

@@ -5,6 +5,8 @@
 Description=ParkUni - túnel de Cloudflare
 After=network-online.target parkuni.service
 Wants=network-online.target
+# Si parkuni se detiene (p. ej. apagado de emergencia), el túnel se cae con él.
+BindsTo=parkuni.service
 
 [Service]
 User=parkuni

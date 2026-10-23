@@ -560,6 +560,7 @@ class MainMenu(Screen):
             ("4", "Red / WiFi", lambda app: WifiScreen(app)),
             ("5", "Logs", lambda app: LogsScreen()),
             ("6", "Emergencia", lambda app: EmergencyScreen()),
+            ("x", "Apagado de emergencia informática", lambda app: KillScreen()),
             ("l", "Prueba de LED RGB", lambda app: LedTestScreen()),
             ("b", "Respaldo de la base", lambda app: BackupScreen()),
             ("i", "Internet / cerrar el panel", lambda app: InternetScreen()),
@@ -1511,6 +1512,43 @@ class EmergencyScreen(Screen):
                 r = api_admin(app, "/api/emergency", {"on": not on, "password": pw}, timeout=3)
                 app.say(("Emergencia ACTIVADA." if not on else "Emergencia desactivada.") if r.get("ok") else (r.get("error") or "No se pudo cambiar."),
                         ("em" if not on else "ok") if r.get("ok") else "bad")
+            except Exception as e:
+                app.say(f"Error al hablar con el servidor: {e}", "bad")
+            app.p.kick()
+        return None
+
+
+# ----------------------------------------------------------------------------- apagado de emergencia informática
+class KillScreen(Screen):
+    def draw(self, app, h, w):
+        app.frame("Apagado de emergencia informática", "Enter apagar el servidor   q volver", h, w)
+        app.put(2, 2, "Detiene ParkUni por completo (app, panel, sensores y túnel) ante un incidente informático.")
+        app.put(3, 2, "Solo se ordena desde esta laptop, con su contraseña propia (no la del panel ni la de emergencia).", A["dim"])
+        app.put(4, 2, "No vuelve a arrancar solo, ni siquiera al reiniciar la laptop.", A["dim"])
+        app.put(6, 2, "Para volver a encenderlo:", A["warn"])
+        app.put(7, 4, "sudo rm /opt/parkuni/server/data/APAGADO_DE_EMERGENCIA && sudo systemctl start parkuni")
+        if app.p.s["api"] is None:
+            app.put(9, 2, "El servidor no responde: ya está apagado o detenido.", A["bad"])
+        else:
+            app.put(9, 2, "> Enter: APAGAR EL SERVIDOR", A["warn"])
+
+    def key(self, app, k):
+        if k in (ord("q"), 27):
+            return "back"
+        if k in (10, 13, curses.KEY_ENTER):
+            if app.p.s["api"] is None:
+                app.say("El servidor no responde.", "bad")
+                return None
+            if not app.confirm(["¡EMERGENCIA! Se apagará el servidor ParkUni.", "La app y los sensores quedarán sin servicio."]):
+                app.say("Cancelado.", "warn")
+                return None
+            pw = app.prompt("Contraseña de apagado de emergencia", secret=True)
+            if pw is None:
+                return None
+            try:
+                r = api("/api/kill", {"password": pw}, timeout=3)
+                app.say("Servidor APAGADO. Para encenderlo, mira las instrucciones de esta pantalla." if r.get("ok")
+                        else (r.get("error") or "No se pudo apagar."), "em" if r.get("ok") else "bad")
             except Exception as e:
                 app.say(f"Error al hablar con el servidor: {e}", "bad")
             app.p.kick()

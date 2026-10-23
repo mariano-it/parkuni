@@ -101,3 +101,10 @@ No toca: SELinux (sigue `Enforcing`), el firewall, la red ni el entorno gráfico
   Para abrirlo a mano: `parkuni`.
 - **Si algo sale mal sin escritorio:** `Ctrl+Alt+F3` abre otra terminal; en GRUB, `e` sobre la entrada de Fedora y
   `systemd.unit=graphical.target` al final de la línea `linux`, `Ctrl+X` (solo ese arranque).
+
+## Apagado de emergencia informática (2026-10-23)
+- **Qué:** `POST /api/kill {"password": ...}` con `PARKUNI_KILL_PASSWORD` (en `/etc/parkuni.env`, distinta de la del panel y la de emergencia; no pide sesión del panel). **Solo se acepta desde la propia laptop** (127.0.0.1 sin `Cf-Connecting-Ip`): internet y red local reciben 403. Se usa desde el menú `parkuni` → `x`; NO hay botón en `admin.html` (decisión del usuario: ahí alguien podría adivinar la contraseña). Al acertar: evento en la base, crea `server/data/APAGADO_DE_EMERGENCIA` y el proceso sale con código 77.
+- **Por qué no revive:** `parkuni.service` tiene `RestartPreventExitStatus=77`; `parkuni-tunel.service` tiene `BindsTo=parkuni.service` (el túnel cae con el servidor). Si la laptop se reinicia, el servidor ve la marca y no arranca.
+- **Freno de fuerza bruta:** 3 fallos en una hora (global, todas las IP) bloquean el apagado esa hora.
+- **Para volver a encender:** `sudo rm /opt/parkuni/server/data/APAGADO_DE_EMERGENCIA && sudo systemctl start parkuni` (y el túnel, si se quiere).
+- **Cómo deshacerlo:** quitar `PARKUNI_KILL_PASSWORD` de `/etc/parkuni.env` (el apagado queda inhabilitado) y reinstalar con `instalar.sh`.

@@ -32,6 +32,9 @@ ROOT = os.path.join(HERE, "..", "public")                      # lo único que s
 DB_PATH = os.environ.get("PARKUNI_DB", os.path.join(HERE, "data", "parkuni.db"))
 EM_PASSWORD = os.environ.get("PARKUNI_EMERGENCY_PASSWORD", "")
 ADMIN_PASSWORD = os.environ.get("PARKUNI_ADMIN_PASSWORD", "")
+KILL_PASSWORD = os.environ.get("PARKUNI_KILL_PASSWORD", "")   # apagado de emergencia informática (aparte de las otras dos)
+KILL_EXIT = 77           # código de salida del apagado; parkuni.service lo trae en RestartPreventExitStatus para que systemd NO lo reviva
+KILL_MARK = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "APAGADO_DE_EMERGENCIA")
 ADMIN_LOCAL_ONLY = os.environ.get("PARKUNI_ADMIN_LOCAL_ONLY") == "1"
 SESSION_TTL = 8 * 3600   # la sesión del panel dura 8 horas
 COOKIE = "parkuni_session"
@@ -53,7 +56,8 @@ LOGIN_FAILS = {}         # ip -> intentos fallidos de inicio de sesión del últ
 SESSIONS = {}            # token -> (vencimiento, vino de internet); solo en memoria: reiniciar el servidor cierra las sesiones
 BANNED = {}              # ip -> hasta cuándo está bloqueada por insistir con contraseñas malas
 PUB_FAILS = []           # fallos de login desde internet (todas las IP juntas), para el cierre automático
-PUB_LOCK_UNTIL = [0.0]   # hasta cuándo está cerrado el login desde internet (cierre automático)
+KILL_FAILS = []          # fallos de la contraseña de apagado (de todas las IP juntas)
+PUB_LOCK_UNTIL = [0.0]  # hasta cuándo está cerrado el login desde internet (cierre automático)
 LOGIN_MIN_PASSWORD = 12
 LED_TEST = {}            # id de sensor -> {color, t}   (prueba de LED RGB desde el panel; solo en memoria)
 LED_TEST_TTL = 180       # la prueba se apaga sola: si se olvida, los LED vuelven a indicar libre / ocupado
@@ -168,6 +172,34 @@ def set_emergency(on, password):
         return False, "Contraseña incorrecta"
     kv_set("emergency", {"on": bool(on), "since": now if on else None})
     add_event("⚠ EMERGENCIA ACTIVADA: LED en morado intermitente" if on else "Emergencia desactivada: LED normales", "emergency")
+    return True, "ok"
+
+
+def kill_try(password, ip):
+    """Apagado de emergencia. Devuelve (ok, mensaje). La contraseña es solo del apagado y no sirve para nada más.
+    Freno de fuerza bruta global (no por IP, porque son pocos dígitos): 3 fallos en una hora cierran el apagado esa hora."""
+    now = time.time()
+    KILL_FAILS[:] = [t for t in KILL_FAILS if now - t < 3600]
+    if len(KILL_FAILS) >= 3:
+        return False, "Apagado bloqueado por demasiados intentos. Usa la laptop: sudo systemctl stop parkuni"
+    if not KILL_PASSWORD:
+        return False, "El apagado de emergencia no está configurado en el servidor"
+    if not hmac.compare_digest(str(password or "").encode(), KILL_PASSWORD.encode()):
+        KILL_FAILS.append(now)
+        add_event(f"Intento de APAGADO de emergencia con contraseña incorrecta (desde {ip})", "security")
+        return False, "Contraseña incorrecta"
+    add_event(f"⛔ APAGADO DE EMERGENCIA ordenado desde {ip}: el servidor se detiene", "security")
+    try:
+        with open(KILL_MARK, "w") as f:
+            f.write(f"apagado {time.strftime('%Y-%m-%d %H:%M:%S')} desde {ip}\n")
+    except OSError:
+        pass
+    def bye():
+        time.sleep(0.5)                      # deja salir la respuesta HTTP
+        with LOCK:
+            DB.commit()
+        os._exit(KILL_EXIT)
+    threading.Thread(target=bye, daemon=True).start()
     return True, "ok"
 
 
@@ -340,6 +372,14 @@ class Handler(SimpleHTTPRequestHandler):
         if p == "/api/logout":
             SESSIONS.pop(self._token(), None)
             return self._json({"ok": True}, headers=self._cookie("", 0))
+        if p == "/api/kill":                               # sin sesión de panel a propósito: tiene su propia contraseña
+            if public or self.client_address[0] not in LOOPBACK:   # solo desde esta laptop (menú de terminal): ni internet ni red local
+                return self._json({"ok": False, "error": "El apagado de emergencia solo se puede ordenar desde la laptop del servidor"}, 403)
+            with LOCK:
+                ok, msg = kill_try(d.get("password"), self._ip())
+            if not ok and msg == "Contraseña incorrecta":
+                time.sleep(1.0)
+            return self._json({"ok": ok, "error": None if ok else msg}, 200 if ok else 403)
         if p in ADMIN_POST and not self._admin():
             return self._json({"ok": False, "error": "auth"}, 401)
         with LOCK:
@@ -455,6 +495,10 @@ def main():
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--https", action="store_true")
     a = ap.parse_args()
+    if os.path.exists(KILL_MARK):                      # quedó apagado por emergencia: no arranca ni tras reiniciar la laptop
+        print(f"APAGADO DE EMERGENCIA activo ({KILL_MARK}). Revisa qué pasó y, cuando sea seguro:\n"
+              f"  sudo rm {KILL_MARK} && sudo systemctl start parkuni")
+        raise SystemExit(KILL_EXIT)
     PORT[0] = a.port
     ip = lan_ip()
     scheme = "http"
@@ -472,6 +516,8 @@ def main():
         print("Aviso     : falta PARKUNI_ADMIN_PASSWORD: el panel de administración queda bloqueado.")
     if not EM_PASSWORD:
         print("Aviso     : falta PARKUNI_EMERGENCY_PASSWORD: la emergencia queda bloqueada.")
+    if not KILL_PASSWORD:
+        print("Aviso     : falta PARKUNI_KILL_PASSWORD: el apagado de emergencia no está disponible.")
     if ADMIN_PASSWORD and len(ADMIN_PASSWORD) < LOGIN_MIN_PASSWORD:
         print(f"Aviso     : la contraseña del panel tiene menos de {LOGIN_MIN_PASSWORD} caracteres; para internet usa una larga.")
     if FLAGS["lockdown"]:
