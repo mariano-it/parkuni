@@ -254,3 +254,48 @@ $('logout').onclick = async (e) => {
   try { await api('/api/logout', {}); } catch {}
   location.href = 'login.html';
 };
+
+/* ---------- QR de la app del conductor ---------- */
+// El QR lleva a la APP DEL CONDUCTOR (raíz del sitio), nunca al panel. El link de internet lo da el túnel de Cloudflare
+// (se enciende desde el menú de terminal: parkuni -> i); el de la red local es la dirección de esta laptop.
+const QR = { tab: 'net', data: null, timer: null };
+function qrDraw() {
+  const url = QR.tab === 'net' ? QR.data?.url : QR.data?.lan;
+  const box = $('qrImg');
+  $('qrNet').classList.toggle('on', QR.tab === 'net');
+  $('qrLan').classList.toggle('on', QR.tab === 'lan');
+  if (!url) {
+    box.innerHTML = `<div class="qrnone">${QR.data ? (QR.tab === 'net' ? 'El túnel está apagado.' : 'Sin dirección de red local.') : 'Consultando…'}</div>`;
+    $('qrUrl').textContent = '';
+    $('qrHint').textContent = QR.tab === 'net' ? 'Enciéndelo en la laptop del servidor: menú parkuni → i → t.' : '';
+    return;
+  }
+  if (QR.shown !== url) {                                  // no redibujar si no cambió (el sondeo corre cada 3 s)
+    const q = qrcode(0, 'M');
+    q.addData(url);
+    q.make();
+    box.innerHTML = q.createSvgTag({ cellSize: 8, margin: 0, scalable: true });
+    QR.shown = url;
+  }
+  $('qrUrl').textContent = url;
+  $('qrHint').textContent = QR.tab === 'net' ? 'Escanea con la cámara del celular. Funciona desde cualquier red.' : 'Solo funciona con el celular conectado a la misma red WiFi que la laptop.';
+}
+async function qrLoad() {
+  try { QR.data = await api('/api/tunnel'); } catch { QR.data = { url: null, lan: null }; }
+  if (QR.data && QR.data.error === 'auth') return;
+  qrDraw();
+}
+function qrOpen() {
+  QR.tab = 'net'; QR.userPicked = false; QR.shown = null; QR.data = null;
+  $('qrModal').hidden = false;
+  qrDraw();
+  qrLoad();
+  QR.timer = setInterval(qrLoad, 3000);
+}
+function qrClose() { $('qrModal').hidden = true; clearInterval(QR.timer); }
+$('btnQr').onclick = (e) => { e.preventDefault(); qrOpen(); };
+$('qrClose').onclick = qrClose;
+$('qrModal').onclick = (e) => { if (e.target === $('qrModal')) qrClose(); };
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('qrModal').hidden) qrClose(); });
+$('qrNet').onclick = () => { QR.tab = 'net'; QR.userPicked = true; qrDraw(); };
+$('qrLan').onclick = () => { QR.tab = 'lan'; QR.userPicked = true; qrDraw(); };

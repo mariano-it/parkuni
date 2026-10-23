@@ -56,6 +56,8 @@ if [ -f /etc/systemd/system/parkuni.service ]; then
 fi
 install -m 644 "$DEST/server/parkuni.service" /etc/systemd/system/parkuni.service
 restorecon /etc/systemd/system/parkuni.service
+install -m 644 "$DEST/server/parkuni-tunel.service" /etc/systemd/system/parkuni-tunel.service   # solo se copia; no se activa (necesita cloudflared)
+restorecon /etc/systemd/system/parkuni-tunel.service
 systemctl daemon-reload
 systemctl enable parkuni
 systemctl restart parkuni

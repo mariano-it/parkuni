@@ -17,9 +17,14 @@ Variables de entorno (en el servidor viven en /etc/parkuni.env, nunca en el cód
   PARKUNI_ADMIN_PASSWORD       contraseña del panel de administración (sin ella el panel queda bloqueado)
   PARKUNI_EMERGENCY_PASSWORD   contraseña para activar/desactivar la emergencia (sin ella la emergencia queda bloqueada)
   PARKUNI_ADMIN_LOCAL_ONLY     "1": el panel y sus rutas solo se aceptan desde esta misma máquina (127.0.0.1)
+
+Internet (Cloudflare Tunnel): cloudflared entra por 127.0.0.1 y añade la cabecera Cf-Connecting-Ip con la IP real.
+Esas peticiones se tratan como "públicas": no pueden usar /api/sensor (el ESP32 está en la red local), el login frena
+la fuerza bruta (por IP y global) y el panel se puede cerrar de golpe con /api/lockdown (menú de terminal -> i).
+  PARKUNI_TUNNEL_METRICS       dirección local de métricas de cloudflared (por defecto 127.0.0.1:20241): de ahí sale el link público
   PARKUNI_DB                   ruta del archivo SQLite
 """
-import argparse, hmac, json, os, secrets, socket, sqlite3, ssl, subprocess, threading, time
+import argparse, hmac, json, os, secrets, socket, sqlite3, ssl, subprocess, threading, time, urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -31,9 +36,13 @@ ADMIN_LOCAL_ONLY = os.environ.get("PARKUNI_ADMIN_LOCAL_ONLY") == "1"
 SESSION_TTL = 8 * 3600   # la sesión del panel dura 8 horas
 COOKIE = "parkuni_session"
 # rutas de escritura que solo puede usar el administrador (el ESP32 y la app del conductor usan las demás)
-ADMIN_POST = {"/api/ledtest", "/api/emergency", "/api/override", "/api/overrides/clear", "/api/sim", "/api/config", "/api/reset"}
+ADMIN_POST = {"/api/lockdown", "/api/ledtest", "/api/emergency", "/api/override", "/api/overrides/clear", "/api/sim", "/api/config", "/api/reset"}
 ADMIN_PAGES = {"/admin.html", "/js/admin.js"}
 LOOPBACK = ("127.0.0.1", "::1")
+TUNNEL_METRICS = os.environ.get("PARKUNI_TUNNEL_METRICS", "127.0.0.1:20241")
+PORT = [8000]            # puerto en el que escucha (lo fija main); se usa para el link de la red local
+_NOPROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+TUNNEL_CACHE = [0.0, None]   # [cuándo se consultó, link]
 STALE_S = 120            # un sensor sin reportar en este tiempo se marca "sin señal"
 DRIVER_TTL = 10          # un conductor sin latido en este tiempo desaparece del panel
 
@@ -41,7 +50,11 @@ LOCK = threading.Lock()
 DRIVERS = {}             # id -> {target, x, y, speed, t}   (solo en memoria)
 FAILS = []               # intentos fallidos de contraseña de emergencia (para frenar fuerza bruta)
 LOGIN_FAILS = {}         # ip -> intentos fallidos de inicio de sesión del último minuto
-SESSIONS = {}            # token -> vencimiento (solo en memoria: reiniciar el servidor cierra las sesiones)
+SESSIONS = {}            # token -> (vencimiento, vino de internet); solo en memoria: reiniciar el servidor cierra las sesiones
+BANNED = {}              # ip -> hasta cuándo está bloqueada por insistir con contraseñas malas
+PUB_FAILS = []           # fallos de login desde internet (todas las IP juntas), para el cierre automático
+PUB_LOCK_UNTIL = [0.0]   # hasta cuándo está cerrado el login desde internet (cierre automático)
+LOGIN_MIN_PASSWORD = 12
 LED_TEST = {}            # id de sensor -> {color, t}   (prueba de LED RGB desde el panel; solo en memoria)
 LED_TEST_TTL = 180       # la prueba se apaga sola: si se olvida, los LED vuelven a indicar libre / ocupado
 LED_SENSORS = ["A1", "A2", "A3", "A4"]
@@ -76,6 +89,9 @@ def kv_set(k, v):
     DB.commit()
 
 
+FLAGS = {"lockdown": kv_get("lockdown", False)}   # True = el panel NO se acepta desde internet (los de la red local sí)
+
+
 def add_event(msg, typ="info"):
     DB.execute("INSERT INTO events(t,type,msg) VALUES(?,?,?)", (time.time(), typ, msg))
     DB.execute("DELETE FROM events WHERE id <= (SELECT MAX(id) FROM events) - 500")   # solo las últimas 500
@@ -105,6 +121,7 @@ def snapshot(with_events):
         "speedingCount": kv_get("speeding", 0),
         "esp": bool(seen) and len(stale) < len(seen),
         "emergency": emergency_state(),
+        "lockdown": FLAGS["lockdown"],
         "ledTest": led_test_active(),
         "drivers": [{"id": k, **d} for k, d in DRIVERS.items()],
         "events": [],
@@ -154,24 +171,63 @@ def set_emergency(on, password):
     return True, "ok"
 
 
-def login_try(ip, password):
-    """Devuelve (token, error). Frena la fuerza bruta: 5 fallos por minuto desde la misma IP."""
+def tunnel_url():
+    """Link público del quick tunnel de cloudflared (https://xxxx.trycloudflare.com/) o None si el túnel está apagado.
+    Lo pregunta al servidor de métricas local de cloudflared (/quicktunnel); se consulta como mucho cada 3 s."""
     now = time.time()
-    fails = [t for t in LOGIN_FAILS.get(ip, []) if now - t < 60]
+    if now - TUNNEL_CACHE[0] < 3:
+        return TUNNEL_CACHE[1]
+    url = None
+    try:
+        with _NOPROXY.open(f"http://{TUNNEL_METRICS}/quicktunnel", timeout=1.5) as r:
+            host = str(json.load(r).get("hostname") or "")
+        if host.endswith(".trycloudflare.com") and host.replace("-", "").replace(".", "").isalnum():
+            url = f"https://{host}/"
+    except Exception:
+        pass
+    TUNNEL_CACHE[:] = [now, url]
+    return url
+
+
+def login_try(ip, password, public):
+    """Devuelve (token, error). Defensas contra fuerza bruta:
+    - 5 fallos por minuto desde la misma IP; 10 fallos en 15 min bloquean esa IP 30 min.
+    - Desde internet: 40 fallos entre todas las IP en 10 min cierran el login público 10 min (la red local sigue entrando).
+    - Con el panel cerrado a internet (lockdown) el login público no existe."""
+    now = time.time()
+    if public and FLAGS["lockdown"]:
+        return None, "El panel está cerrado desde internet. Ábrelo desde la red local."
+    if public and now < PUB_LOCK_UNTIL[0]:
+        return None, "Demasiados intentos fallidos desde internet. Espera unos minutos."
+    if BANNED.get(ip, 0) > now:
+        return None, "Tu IP está bloqueada un rato por demasiados intentos."
+    if len(LOGIN_FAILS) > 5000:                      # no dejar crecer la memoria con un ataque desde muchas IP
+        LOGIN_FAILS.clear()
+        BANNED.clear()
+    fails = [t for t in LOGIN_FAILS.get(ip, []) if now - t < 900]
     LOGIN_FAILS[ip] = fails
-    if len(fails) >= 5:
+    if sum(1 for t in fails if now - t < 60) >= 5:
         return None, "Demasiados intentos. Espera un minuto."
     if not ADMIN_PASSWORD:
         return None, "El panel está bloqueado: falta PARKUNI_ADMIN_PASSWORD en el servidor"
     if not hmac.compare_digest(str(password or "").encode(), ADMIN_PASSWORD.encode()):
         fails.append(now)
-        add_event(f"Intento de inicio de sesión del panel con contraseña incorrecta ({ip})", "security")
+        add_event(f"Intento de inicio de sesión del panel con contraseña incorrecta ({ip}{', internet' if public else ''})", "security")
+        if len(fails) >= 10:
+            BANNED[ip] = now + 1800
+            add_event(f"IP bloqueada 30 min por insistir con contraseñas incorrectas: {ip}", "security")
+        if public:
+            PUB_FAILS[:] = [t for t in PUB_FAILS if now - t < 600] + [now]
+            if len(PUB_FAILS) >= 40:
+                PUB_LOCK_UNTIL[0] = now + 600
+                PUB_FAILS.clear()
+                add_event("ALERTA: demasiados intentos fallidos desde internet; login público cerrado 10 min", "security")
         return None, "Contraseña incorrecta"
-    for k in [k for k, exp in SESSIONS.items() if exp < now]:
+    for k in [k for k, (exp, _) in SESSIONS.items() if exp < now]:
         del SESSIONS[k]
     token = secrets.token_urlsafe(32)
-    SESSIONS[token] = now + SESSION_TTL
-    add_event(f"Inicio de sesión en el panel ({ip})", "security")
+    SESSIONS[token] = (now + SESSION_TTL, bool(public))
+    add_event(f"Inicio de sesión en el panel ({ip}{', internet' if public else ''})", "security")
     return token, None
 
 
@@ -187,6 +243,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
         super().end_headers()
 
     def log_message(self, fmt, *args):
@@ -210,16 +269,27 @@ class Handler(SimpleHTTPRequestHandler):
                 return v
         return None
 
+    def _public(self):
+        """True si la petición viene de internet: la trae cloudflared (desde 127.0.0.1) con la IP real en Cf-Connecting-Ip.
+        Si alguien de la red local manda esa cabecera, se ignora: solo se confía en ella desde 127.0.0.1."""
+        return self.client_address[0] in LOOPBACK and bool(self.headers.get("Cf-Connecting-Ip"))
+
+    def _ip(self):
+        return (self.headers.get("Cf-Connecting-Ip") or "").strip()[:45] if self._public() else self.client_address[0]
+
     def _admin(self):
-        """True si la petición trae una sesión de administrador vigente (y, si se pidió, viene de esta máquina)."""
-        if ADMIN_LOCAL_ONLY and self.client_address[0] not in LOOPBACK:
+        """True si la petición trae una sesión de administrador vigente (y el acceso desde su origen está permitido)."""
+        if self._public():
+            if ADMIN_LOCAL_ONLY or FLAGS["lockdown"]:
+                return False
+        elif ADMIN_LOCAL_ONLY and self.client_address[0] not in LOOPBACK:
             return False
-        exp = SESSIONS.get(self._token())
-        return bool(exp and exp > time.time())
+        exp, _ = SESSIONS.get(self._token()) or (0, False)
+        return exp > time.time()
 
     def _cookie(self, value, max_age):
         return [("Set-Cookie", f"{COOKIE}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}"
-                               + ("; Secure" if TLS_CTX else ""))]
+                               + ("; Secure" if TLS_CTX or self._public() else ""))]
 
     def do_GET(self):
         path = self.path.split("?")[0]
@@ -231,7 +301,13 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             return self.end_headers()
         if path == "/api/me":
-            return self._json({"admin": self._admin(), "configured": bool(ADMIN_PASSWORD), "localOnly": ADMIN_LOCAL_ONLY})
+            return self._json({"admin": self._admin(), "configured": bool(ADMIN_PASSWORD), "localOnly": ADMIN_LOCAL_ONLY,
+                               "public": self._public(), "lockdown": FLAGS["lockdown"]})
+        if path == "/api/tunnel":                        # link para el QR del panel (solo administrador)
+            if not self._admin():
+                return self._json({"ok": False, "error": "auth"}, 401)
+            lan = None if self._public() else f"http://{lan_ip()}:{PORT[0]}/"
+            return self._json({"ok": True, "url": tunnel_url(), "lan": lan})
         if path == "/api/status":
             with LOCK:
                 return self._json(snapshot("events" in self.path and self._admin()))
@@ -247,14 +323,19 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError:
             return self._json({"error": "json"}, 400)
         p = self.path.split("?")[0]
+        public = self._public()
+        if public and p == "/api/sensor":                  # el ESP32 vive en la red local: de internet no se aceptan lecturas
+            return self._json({"ok": False, "error": "no disponible desde internet"}, 403)
         if p == "/api/login":
-            ip = self.client_address[0]
-            if ADMIN_LOCAL_ONLY and ip not in LOOPBACK:
+            ip = self._ip()
+            if ADMIN_LOCAL_ONLY and (public or ip not in LOOPBACK):
                 return self._json({"ok": False, "error": "El panel solo se puede abrir desde la laptop del servidor"}, 403)
             with LOCK:
-                token, err = login_try(ip, d.get("password"))
+                token, err = login_try(ip, d.get("password"), public)
             if err:
-                return self._json({"ok": False, "error": err}, 429 if err.startswith("Demasiados") else 403)
+                if err == "Contraseña incorrecta":
+                    time.sleep(1.0)                        # frena la fuerza bruta (el servidor atiende cada petición en su hilo)
+                return self._json({"ok": False, "error": err}, 429 if ("Demasiados" in err or "bloqueada" in err) else 403)
             return self._json({"ok": True}, headers=self._cookie(token, SESSION_TTL))
         if p == "/api/logout":
             SESSIONS.pop(self._token(), None)
@@ -279,6 +360,17 @@ class Handler(SimpleHTTPRequestHandler):
                 # "test": máscaras de color (R=1 G=2 B=4) por sensor, solo de los LED en prueba desde el panel
                 test = {k: LED_COLORS[c] for k, c in led_test_active().items()}
                 return self._json({"ok": True, "emergency": emergency_state()["on"], "test": test})
+            if p == "/api/lockdown":
+                on = bool(d.get("on"))
+                if not on and public:                      # cerrar se puede desde cualquier lado; reabrir, solo desde la red local
+                    return self._json({"ok": False, "error": "Solo se puede reabrir desde la red local"}, 403)
+                FLAGS["lockdown"] = on
+                kv_set("lockdown", on)
+                if on:
+                    for k in [k for k, (_, from_net) in SESSIONS.items() if from_net]:   # cae toda sesión abierta desde internet
+                        del SESSIONS[k]
+                add_event("Panel CERRADO a internet" if on else "Panel abierto a internet", "security")
+                return self._json({"ok": True, "lockdown": on})
             if p == "/api/ledtest":
                 color = d.get("color")
                 if not led_test_set(str(d.get("id")), color):
@@ -363,6 +455,7 @@ def main():
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--https", action="store_true")
     a = ap.parse_args()
+    PORT[0] = a.port
     ip = lan_ip()
     scheme = "http"
     if a.https:
@@ -379,6 +472,10 @@ def main():
         print("Aviso     : falta PARKUNI_ADMIN_PASSWORD: el panel de administración queda bloqueado.")
     if not EM_PASSWORD:
         print("Aviso     : falta PARKUNI_EMERGENCY_PASSWORD: la emergencia queda bloqueada.")
+    if ADMIN_PASSWORD and len(ADMIN_PASSWORD) < LOGIN_MIN_PASSWORD:
+        print(f"Aviso     : la contraseña del panel tiene menos de {LOGIN_MIN_PASSWORD} caracteres; para internet usa una larga.")
+    if FLAGS["lockdown"]:
+        print("Panel     : CERRADO a internet (lockdown); solo se acepta desde la red local.")
     if ADMIN_LOCAL_ONLY:
         print("Panel     : solo se acepta desde esta máquina (PARKUNI_ADMIN_LOCAL_ONLY=1).")
     try:

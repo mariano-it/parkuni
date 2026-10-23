@@ -1,0 +1,16 @@
+# Túnel de Cloudflare para publicar ParkUni en internet (sin abrir puertos del router).
+# Instalación: ver README, sección "Subir a internet". Link: menú `parkuni` -> i  (o:  journalctl -u parkuni-tunel | grep trycloudflare)
+# Es un "quick tunnel": no necesita cuenta ni dominio; el link *.trycloudflare.com cambia cada vez que arranca.
+[Unit]
+Description=ParkUni - túnel de Cloudflare
+After=network-online.target parkuni.service
+Wants=network-online.target
+
+[Service]
+User=parkuni
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:20241 --url http://127.0.0.1:8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

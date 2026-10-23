@@ -231,3 +231,17 @@ input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
 .ledbtn i { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--muted); }
 .ledbtn i.auto { background: conic-gradient(var(--free) 0 50%, var(--busy) 0); }
 .ledbtn.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+
+/* QR de la app del conductor (panel de administración) */
+.qrmodal { position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .65); padding: 16px; }
+.qrmodal[hidden] { display: none; }
+.qrbox { position: relative; width: min(94vw, 560px); max-height: 94vh; overflow: auto; text-align: center; padding: 22px 22px 18px;
+  background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 14px; }
+.qrbox h2 { font-size: 20px; margin-bottom: 12px; }
+.qrbox .seg { display: inline-flex; margin-bottom: 14px; }
+.qrclose { position: absolute; top: 8px; right: 10px; border: 0; background: none; color: var(--muted); font-size: 20px; cursor: pointer; }
+.qrimg { background: #fff; border-radius: 10px; padding: 26px; width: min(82vw, 420px); margin: 0 auto; }
+.qrimg svg { display: block; width: 100%; height: auto; }
+.qrimg .qrnone { color: #444; padding: 60px 12px; font-size: 15px; }
+.qrurl { margin-top: 12px; font-weight: 600; word-break: break-all; }
+.qrbox small { display: block; margin-top: 6px; color: var(--muted); }

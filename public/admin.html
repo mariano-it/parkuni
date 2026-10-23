@@ -20,6 +20,7 @@
         <button id="mapCampus">Campus</button>
       </div>
       <a href="index.html" target="_blank">App del conductor ↗</a>
+      <a href="#" id="btnQr">QR de la app</a>
       <a href="#" id="logout">Cerrar sesión</a>
       <div class="conn" id="conn"><span class="dot"></span><span id="connText">Conectando…</span></div>
     </div>
@@ -126,6 +127,21 @@
     </div>
   </section>
 
+  <div class="qrmodal" id="qrModal" hidden>
+    <div class="qrbox" role="dialog" aria-modal="true" aria-label="QR de la app del conductor">
+      <button class="qrclose" id="qrClose" aria-label="Cerrar">✕</button>
+      <h2>Prueba la app del conductor</h2>
+      <div class="seg" id="qrTabs">
+        <button id="qrNet" class="on">Internet</button>
+        <button id="qrLan">Red local</button>
+      </div>
+      <div class="qrimg" id="qrImg"></div>
+      <p class="qrurl" id="qrUrl"></p>
+      <small id="qrHint"></small>
+    </div>
+  </div>
+
+  <script src="js/vendor/qrcode.min.js"></script>
   <script src="js/config.js"></script>
   <script src="js/map-data.js"></script>
   <script src="js/graph.js"></script>

@@ -23,6 +23,8 @@ HERE = os.path.dirname(os.path.realpath(__file__))        # realpath: el acceso 
 URL = os.environ.get("PARKUNI_URL", "http://127.0.0.1:8000").rstrip("/")
 PORT = urllib.parse.urlparse(URL).port or 80
 SERVICE = os.environ.get("PARKUNI_SERVICE", "parkuni")
+TUNNEL = "parkuni-tunel"                            # servicio del túnel de Cloudflare (server/parkuni-tunel.service)
+TUNNEL_METRICS = os.environ.get("PARKUNI_TUNNEL_METRICS", "127.0.0.1:20241")   # cloudflared publica ahí el link (/quicktunnel)
 STALE_S = 120                                    # igual que server.py: sin reportar en este tiempo = "sin señal"
 EXPECTED = ["A1", "A2", "A3", "A4"]              # sensores del prototipo
 ESP32_NAME = "parkuni"                           # nombre de la laptop que busca el ESP32 (SERVER_HOST del firmware)
@@ -560,6 +562,7 @@ class MainMenu(Screen):
             ("6", "Emergencia", lambda app: EmergencyScreen()),
             ("l", "Prueba de LED RGB", lambda app: LedTestScreen()),
             ("b", "Respaldo de la base", lambda app: BackupScreen()),
+            ("i", "Internet / cerrar el panel", lambda app: InternetScreen()),
             ("7", "Monitor del equipo (btop)", lambda app: app.run_btop()),
             ("s", "Monitor serie del ESP32", lambda app: SerialScreen()),
             ("8", "Entorno gráfico de Fedora", lambda app: DesktopScreen()),
@@ -584,6 +587,10 @@ class MainMenu(Screen):
         if key == "l":
             n = len((s["api"] or {}).get("ledTest", {}))
             return (f"{n} LED en prueba" if n else "diagnóstico de los LED"), ("warn" if n else "dim")
+        if key == "i":
+            lock = bool((s["api"] or {}).get("lockdown"))
+            on = sh(["systemctl", "is-active", TUNNEL])[1].strip() == "active"
+            return (("túnel ACTIVO" if on else "túnel apagado") + ("  ·  panel CERRADO a internet" if lock else "")), ("warn" if on and not lock else "dim")
         if key == "b":
             c = backups()
             return (f"{len(c)} copia(s) · última hace {ago(time.time() - c[0][2])}" if c else "sin copias todavía"), ("dim" if c else "warn")
@@ -660,8 +667,8 @@ class MainMenu(Screen):
         text, until, kind = app.flash
         if text and time.time() < until:
             app.put(h - 2, 1, text, A[kind])
-        app.put(h - 1, 0, " ↑↓ mover  Enter elegir  1-9 l b s atajo  q terminal  p apagar  Ctrl+C salir"
-                if UTF8 else " Up/Down mover  Enter elegir  1-9 l b s atajo  q terminal  p apagar  Ctrl+C salir", A["dim"])
+        app.put(h - 1, 0, " ↑↓ mover  Enter elegir  1-9 l b i s atajo  q terminal  p apagar  Ctrl+C salir"
+                if UTF8 else " Up/Down mover  Enter elegir  1-9 l b i s atajo  q terminal  p apagar  Ctrl+C salir", A["dim"])
 
     def key(self, app, k):
         n = len(self.items)
@@ -1648,6 +1655,139 @@ class BackupScreen(Screen):
             elif app.confirm(["Se copiará la base de datos a:", BACKUP_DIR, "¿Hacer el respaldo ahora?"]):
                 rc = app.external(["python3", os.path.abspath(BACKUP_PY), "--db", DB_PATH, "--dir", BACKUP_DIR])
                 app.say("Respaldo hecho." if rc == 0 else "El respaldo falló (ver mensaje arriba).", "ok" if rc == 0 else "bad")
+        return None
+
+
+# ----------------------------------------------------------------------------- internet
+def tunnel_state():
+    """(estado del servicio del túnel, link público o None). El link se pide a las métricas locales de cloudflared
+    (/quicktunnel); si no responden, se busca en el registro del servicio."""
+    st = sh(["systemctl", "is-active", TUNNEL])[1].strip() or "?"
+    url = None
+    if st == "active":
+        try:
+            with _OPENER.open(f"http://{TUNNEL_METRICS}/quicktunnel", timeout=1.5) as r:
+                host = str(json.load(r).get("hostname") or "")
+            if host.endswith(".trycloudflare.com"):
+                url = f"https://{host}/"
+        except Exception:
+            pass
+        if not url:
+            found = re.findall(r"https://[a-z0-9-]+\.trycloudflare\.com", sh(["journalctl", "-u", TUNNEL, "-n", "300", "--no-pager", "-o", "cat"], timeout=5)[1])
+            url = found[-1] + "/" if found else None
+    return st, url
+
+
+def qr_matrix(text):
+    """Matriz del QR [[bool]] (True = módulo oscuro) con la herramienta qrencode, o None si no está instalada."""
+    if not shutil.which("qrencode"):
+        return None
+    rc, out = sh(["qrencode", "-t", "ASCII", "-m", "2", "-l", "M", "-o", "-", text])
+    if rc or not out:
+        return None
+    rows = out.split("\n")
+    return [[line[i] == "#" for i in range(0, len(line) - 1, 2)] for line in rows]
+
+
+class InternetScreen(Screen, Bg):
+    """Acceso desde internet: estado del túnel y el interruptor para cerrar el panel de golpe (lockdown)."""
+
+    def __init__(self):
+        self.st, self.url, self.t = "?", None, 0.0
+        self.qr, self.qr_url, self.show_qr = None, None, False
+
+    def draw_qr(self, app, h, w):
+        """El QR se dibuja con medios bloques (2 filas de módulos por línea de pantalla): sale de ~18 líneas.
+        Módulo claro = celda en vídeo inverso; la zona de silencio también, así se lee en terminal oscura."""
+        app.frame("QR de la app del conductor", "r volver   q volver al menú" if UTF8 else "r volver   q menu", h, w)
+        if not self.url:
+            app.put(3, 2, "El túnel no está activo o aún no hay link. Enciéndelo con t.", A["warn"])
+            return
+        if self.qr_url != self.url:
+            self.qr, self.qr_url = qr_matrix(self.url), self.url
+        if not self.qr:
+            app.put(3, 2, "Falta qrencode:  sudo dnf install qrencode   (el QR también sale en el panel web)", A["warn"])
+            app.put(5, 2, self.url, A["bold"])
+            return
+        m = self.qr
+        top = 2
+        if len(m) // 2 + 6 > h or len(m[0]) + 2 > w:
+            app.put(3, 2, f"La terminal es chica para el QR ({len(m[0])}x{len(m) // 2 + 1} necesarios). Agrándala o usa el panel web.", A["warn"])
+            app.put(5, 2, self.url, A["bold"])
+            return
+        x0 = max(0, (w - len(m[0])) // 2)
+        for r in range(0, len(m), 2):
+            for c, dark_t in enumerate(m[r]):
+                dark_b = m[r + 1][c] if r + 1 < len(m) else False
+                ch, at = ((" ", 0) if dark_t and dark_b else ("▄", 0) if dark_t else ("▀", 0) if dark_b else (" ", curses.A_REVERSE))
+                app.put(top + r // 2, x0 + c, ch, at)
+        app.put(top + len(m) // 2 + 1, 2, self.url, A["bold"])
+
+    def refresh(self):
+        self.t = time.time()
+        self.st, self.url = tunnel_state()
+
+    def tick(self, app):
+        if time.time() - self.t > 5:
+            self.bg(self.refresh)
+
+    def draw(self, app, h, w):
+        if self.show_qr:
+            return self.draw_qr(app, h, w)
+        app.frame("Internet / cerrar el panel", "c cerrar/abrir panel   t túnel iniciar/detener   r QR del link   q volver" if UTF8
+                  else "c cerrar/abrir panel   t tunel   r QR   q volver", h, w)
+        api_st = app.p.s["api"]
+        lock = bool((api_st or {}).get("lockdown"))
+        app.segs(2, 2, [("Túnel de Cloudflare : ", 0), (self.st, A["warn"] if self.st == "active" else A["dim"]),
+                        ("   (servicio " + TUNNEL + ")", A["dim"])])
+        if self.st == "active":
+            app.segs(3, 2, [("Link público         : ", 0), (self.url or "buscando en el registro…", A["bold"])])
+        elif self.st in ("inactive", "failed"):
+            app.put(3, 2, "Sin túnel: la app solo se ve en la red local.", A["dim"])
+        else:
+            app.put(3, 2, f"El servicio {TUNNEL} no está instalado (ver README: 'Subir a internet').", A["warn"])
+        if api_st is None:
+            app.put(5, 2, "El servidor no responde.", A["bad"])
+        else:
+            app.segs(5, 2, [("Panel de administración: ", 0), ("CERRADO a internet" if lock else "abierto a internet (con contraseña)", A["ok"] if lock else A["warn"])])
+        app.put(7, 2, "Cerrar el panel = por internet ya no se puede entrar ni usar el login; la app del conductor sigue.", A["dim"])
+        app.put(8, 2, "Desde la red local el panel sigue funcionando. Úsalo si ves intentos raros en los logs (eventos 'security').", A["dim"])
+        app.put(9, 2, "Si hay que cortar todo: tecla t (detiene el túnel) o menú 3 (detiene el servidor).", A["dim"])
+
+    def key(self, app, k):
+        if k in (ord("q"), 27):
+            if self.show_qr:
+                self.show_qr = False
+                return None
+            return "back"
+        api_st = app.p.s["api"]
+        if k == ord("r"):
+            self.show_qr = not self.show_qr
+            if self.show_qr and not self.url:
+                self.refresh()
+        elif k == ord("c"):
+            if api_st is None:
+                app.say("El servidor no responde.", "bad")
+                return None
+            lock = bool(api_st.get("lockdown"))
+            if app.confirm(["Se abrirá el panel a internet (con contraseña)." if lock else "Se cerrará el panel a internet: caen las sesiones abiertas desde internet.",
+                            "¿Continuar?"]):
+                try:
+                    r = api_admin(app, "/api/lockdown", {"on": not lock})
+                    app.say(("Panel cerrado a internet." if r.get("lockdown") else "Panel abierto a internet.") if r.get("ok") else (r.get("error") or "No se pudo cambiar."),
+                            ("ok" if r.get("lockdown") else "warn") if r.get("ok") else "bad")
+                except Exception as e:
+                    app.say(f"Servidor sin respuesta: {type(e).__name__}", "bad")
+                app.p.kick()
+        elif k == ord("t"):
+            if self.st in ("?", "unknown") or self.st not in ("active", "inactive", "failed"):
+                app.say(f"Falta instalar el servicio {TUNNEL} (README: 'Subir a internet').", "warn")
+            else:
+                verb = "stop" if self.st == "active" else "start"
+                if verb == "start" or app.confirm(["Se detendrá el túnel: la app dejará de verse desde internet.", "¿Detener?"]):
+                    app.external(["sudo", "systemctl", verb, TUNNEL], pause="error")
+                    time.sleep(3 if verb == "start" else 0)
+                    self.refresh()
         return None
 
 

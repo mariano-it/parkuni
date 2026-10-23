@@ -63,6 +63,33 @@ Sirve para diagnosticar un LED dañado (ya se fundió uno en las pruebas). Se us
 - `PARKUNI_ADMIN_LOCAL_ONLY=1` en `/etc/parkuni.env`: el panel solo se acepta desde esta misma laptop (127.0.0.1).
 - El menú de terminal (`parkuni`) pide la contraseña del panel la primera vez que usa LED o emergencia (no la guarda; solo la cookie en memoria).
 
+## 🌐 Subir a internet
+
+Se publica con un **Cloudflare Tunnel** (sin abrir puertos del router, con https). Se usa un *quick tunnel*: no pide cuenta ni dominio y da un link `https://<algo>.trycloudflare.com` que **cambia cada vez que arranca el túnel** (para la feria: se pasa el link o un QR). `*.pages.dev` no sirve para esto: Cloudflare Pages solo aloja páginas estáticas y no puede apuntar a un servidor en una laptop.
+
+```bash
+# 1. instalar cloudflared (repositorio oficial de Cloudflare; verifica los comandos vigentes en su documentación)
+sudo dnf config-manager addrepo --from-repofile=https://pkg.cloudflare.com/cloudflared.repo
+sudo dnf install -y cloudflared
+# 2. (si no lo hiciste ya) sudo bash server/instalar.sh  -> copia parkuni-tunel.service
+# 3. encender el túnel y ver el link
+sudo systemctl start parkuni-tunel        # o menú parkuni -> i -> t
+parkuni                                   # menú i: muestra el link público
+```
+Apagar: `sudo systemctl stop parkuni-tunel` (menú `i` → `t`). Que arranque solo no se recomienda: el link cambia en cada arranque.
+
+**QR para que la gente pruebe la app.** El QR lleva a la **app del conductor** (la raíz del link), nunca al panel.
+- En el **panel** (`admin.html`, con sesión): botón *QR de la app* arriba a la derecha → ventana grande con el QR, con pestañas *Internet* y *Red local* (esta solo funciona con el celular en el mismo WiFi). Se actualiza solo cada 3 s: si enciendes el túnel con la ventana abierta, aparece.
+- En el **menú de terminal** (`parkuni` → `i` → `r`): el mismo QR dibujado con caracteres (requiere `qrencode`; la terminal necesita ~24 filas).
+- El link sale de las métricas locales de `cloudflared` (`parkuni-tunel.service` las fija en `127.0.0.1:20241`, ruta `/quicktunnel`); el servidor lo expone solo a administradores en `GET /api/tunnel`.
+- La librería del QR del panel (`qrcode-generator`, MIT) va copiada en `public/js/vendor/`: el panel no depende de internet para dibujarlo.
+
+**Qué ve internet y qué no** (cloudflared entra por 127.0.0.1 con la cabecera `Cf-Connecting-Ip`; el servidor solo confía en ella si viene de 127.0.0.1):
+- La app del conductor y `/api/status` son públicas. **`/api/sensor` NO** se acepta desde internet (el ESP32 está en la red local), así que nadie de afuera puede falsificar lecturas.
+- El panel sí se puede abrir desde internet, con contraseña y estas defensas: espera de 1 s por intento fallido; 5 fallos por minuto por IP; **10 fallos en 15 min bloquean esa IP 30 min**; **40 fallos entre todas las IP en 10 min cierran el login público 10 min** (desde la red local se sigue entrando); cookie `Secure`; todo queda en la bitácora (tipo *security*, con la IP real).
+- **Interruptor de cierre** (menú `parkuni` → `i` → `c`): cierra el panel a internet de golpe y tira las sesiones abiertas desde internet; la red local no se afecta y solo se reabre desde la red local. Para cortar todo: detener el túnel o el servidor.
+- Usa una contraseña del panel **larga** (12+ caracteres; el servidor avisa al arrancar si es corta).
+
 ## 💾 Respaldo de la base
 
 `server/respaldo.py` copia `parkuni.db` con la API de respaldo de SQLite (segura con el servidor encendido), comprueba la integridad de la copia y conserva las últimas 14. **Es manual a propósito**: la laptop del servidor es modesta, así que no hay respaldo automático; el script existe y se usa cuando hace falta.
@@ -121,11 +148,13 @@ El id de cada sensor se enlaza con su cajón en `MAP.sensors` de [`public/js/map
 │       ├── graph.js           Ruteo, instrucciones de giro, ocupación y simulación
 │       ├── mapview.js         Dibujo del mapa (SVG)
 │       ├── driver.js          Navegación, voz, velocidad, GPS, emergencia
-│       └── admin.js           Panel de administración
+│       ├── admin.js           Panel de administración
+│       └── vendor/            qrcode.min.js (QR del panel, MIT)
 ├── server/
 │   ├── server.py              Servidor + API + SQLite (solo librería estándar)
 │   ├── parkuni.service        Servicio systemd para Fedora
 │   ├── respaldo.py            Respaldo manual de la base (menú → b)
+│   ├── parkuni-tunel.service  Túnel de Cloudflare (menú → i)
 │   ├── instalar.sh            Instalador para Fedora (sudo bash server/instalar.sh)
 │   └── tui/parkuni_tui.py     Menú de terminal para operar el servidor (comando: parkuni)
 ├── firmware/
@@ -179,6 +208,8 @@ El campus sale de un dibujo del estacionamiento (1920×1080 px, ≈ 0.2 m por p�
 | `POST /api/sensor` | ESP32 | Reporta los sensores y recibe `emergency` y `test` (prueba de LED) |
 | `GET /api/status` | Apps | Estado completo (sensores, límite, conductores, emergencia; eventos con `?events`) |
 | `POST /api/login` · `/api/logout` · `GET /api/me` | Panel · menú | Inicia / cierra la sesión de administrador (cookie) y consulta si hay sesión |
+| `GET /api/tunnel` | Panel (sesión) | `{url, lan}`: link público del túnel y dirección de la red local, para el QR |
+| `POST /api/lockdown` | Panel · menú | `{on}` cierra / abre el panel a internet (reabrir solo desde la red local) |
 | `POST /api/emergency` | Panel (sesión) | `{on, password}` activa o desactiva la emergencia |
 | `POST /api/ledtest` | Panel · menú de terminal | `{id, color}`: prueba de LED RGB (`id` = `A1`…`A4` o `all`; `color` = red, green, blue, yellow, purple, cyan, white, off o auto) |
 | `POST /api/config` · `/api/sim` · `/api/override` | Panel | Límite de velocidad, simulación y cajones forzados |
@@ -187,6 +218,6 @@ El campus sale de un dibujo del estacionamiento (1920×1080 px, ≈ 0.2 m por p�
 
 ## ⚠️ Pendientes y limitaciones
 
-- El panel y las rutas de escritura ya piden sesión, pero `/api/sensor` (ESP32) sigue abierta: cualquiera en la red podría mandar lecturas falsas. Si se publica en internet, conviene un token compartido con el ESP32 y https.
+- `/api/sensor` (ESP32) no tiene autenticación: desde internet se bloquea, pero cualquiera en la red local podría mandar lecturas falsas. Un token compartido con el ESP32 obligaría a recargar el firmware.
 - Los sentidos de algunos carriles de la zona este del campus son una interpretación del dibujo: conviene recorrerlos y corregirlos en `map-data.js`.
 - Para ver la posición real del GPS hay que calibrarlo (⚙ → *GPS del celular* → *Fijar entrada*).

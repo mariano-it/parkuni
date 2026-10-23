@@ -1,0 +1,5 @@
+qrcode.min.js = "QR Code Generator for JavaScript" (qrcode-generator 1.4.4, cdnjs.cloudflare.com)
+Copyright (c) 2009 Kazuhiko Arase - https://github.com/kazuhikoarase/qrcode-generator
+Licencia MIT: se permite usar, copiar, modificar y distribuir el software siempre que se conserve este aviso.
+El software se entrega "tal cual", sin garantía de ningún tipo.
+SHA-256 del archivo incluido: 164fc2c1c9eaf0a03aa8dfdb855e82e41a5c6922fbad8bb3238116207e26bef7
