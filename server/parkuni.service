@@ -1,8 +1,8 @@
 # Servicio systemd para el servidor (Fedora).
-# Guía completa: docs/MONTAJE_FEDORA.md
-#   sudo cp server/parkuni.service /etc/systemd/system/
-#   sudo nano /etc/systemd/system/parkuni.service      # ajusta las rutas y la contraseña
-#   sudo systemctl daemon-reload && sudo systemctl enable --now parkuni
+# Guía completa: docs/MONTAJE_FEDORA.md · Instalación: sudo bash server/instalar.sh
+#
+# Las contraseñas (panel de administración y emergencia) viven en /etc/parkuni.env (chmod 600, solo root);
+# instalar.sh crea la plantilla vacía y las escribe el usuario. Sin ellas, el panel y la emergencia quedan bloqueados.
 [Unit]
 Description=ParkUni - estacionamiento inteligente
 After=network-online.target
@@ -11,7 +11,7 @@ Wants=network-online.target
 [Service]
 User=parkuni
 WorkingDirectory=/opt/parkuni
-Environment=PARKUNI_EMERGENCY_PASSWORD=cambia-esta-contrasena
+EnvironmentFile=-/etc/parkuni.env
 ExecStart=/usr/bin/python3 /opt/parkuni/server/server.py --port 8000
 Restart=always
 RestartSec=3

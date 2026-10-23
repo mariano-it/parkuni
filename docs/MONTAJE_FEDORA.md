@@ -6,6 +6,8 @@
 >
 > Nota: esta guía se escribió sin acceso a una máquina con Fedora 44. Si un comando, paquete o ruta cambió (por ejemplo la sintaxis de `dnf5`), **verifícalo y avisa al usuario** en lugar de asumir.
 
+> **Estado (2026-10-20):** las fases 1, 2 y 5 ya están hechas en esta laptop (`parkuni`). Consulta `docs/CAMBIOS_SERVIDOR.md` antes de repetir pasos.
+
 ---
 
 ## 0. Reglas de trabajo (obligatorias)
@@ -105,8 +107,8 @@ Anota todo en `docs/CAMBIOS_SERVIDOR.md`. **Detente y espera el OK.**
 
 Claude **no puede cargar el firmware** (se hace desde Arduino IDE en la compu del usuario); sí prepara todo:
 
-1. En `firmware/parkuni/parkuni.ino` cambiar `SERVER_URL` a `http://<IP-del-servidor>:8000/api/sensor` (y `WIFI_SSID` si cambia la red).
-2. El usuario carga el sketch. Pedirle que abra el Monitor Serie (115200): debe verse `POST -> 200`. Si sale `POST -> -1`, el ESP32 no llega al servidor: revisar IP, que estén en la misma red y el firewall (paso 5 de la Fase 2).
+1. El firmware busca al servidor **por nombre** (`SERVER_HOST = "parkuni"` -> `parkuni.local`, mDNS), no por IP. Basta con que la laptop se llame `parkuni` (`hostnamectl`, avahi activo; lo hace `server/instalar.sh`) y con ajustar `WIFI_SSID` si cambia la red. `SERVER_IP_RESPALDO` solo se usa si nunca se logra resolver el nombre.
+2. El usuario carga el sketch. Pedirle que abra el Monitor Serie (115200): debe verse `Servidor: parkuni.local -> <IP>` y `POST <IP> -> 200`. Si sale `no respondio, uso <IP>` el nombre no se resolvió (la red puede bloquear mDNS); si sale `POST ... -> -1`, el ESP32 no llega al servidor: revisar que estén en la misma red y el firewall (paso 5 de la Fase 2).
 3. Verificar desde el servidor: `curl -s localhost:8000/api/status` debe mostrar `seen: ["A1","A2","A3","A4"]` y `esp: true`; abrir `http://<IP>:8000/admin.html` y ver los 4 sensores. Pedirle al usuario que tape un sensor con la mano y comprobar que el cajón cambia.
 4. Probar la **emergencia** desde el panel web (la contraseña la escribe el usuario): los 4 LED deben parpadear en morado en ~2 s y volver al desactivarla.
 

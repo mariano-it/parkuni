@@ -69,6 +69,7 @@ async function api(path, body) {
   const r = await fetch(path, body === undefined ? { cache: 'no-store' } : {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: true,
   });
+  if (r.status === 401 && location.pathname.endsWith('/admin.html')) { location.href = 'login.html'; }   // la sesión venció
   return r.json();
 }
 

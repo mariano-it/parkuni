@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ParkUni · Iniciar sesión</title>
+  <link rel="icon" type="image/png" href="img/favicon.png">
+  <link rel="stylesheet" href="css/base.css">
+  <style>
+    .login { max-width: 360px; margin: 12vh auto 0; padding: 24px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+    .login .logos { text-align: center; margin-bottom: 12px; }
+    .login img { height: 48px; }
+    .login h1 { font-size: 18px; text-align: center; margin-bottom: 4px; }
+    .login small { display: block; text-align: center; color: var(--muted); margin-bottom: 16px; }
+    .login input, .login button { width: 100%; padding: 10px 12px; font: inherit; border-radius: 8px; }
+    .login input { border: 1px solid var(--line); background: var(--bg); color: var(--text); margin-bottom: 10px; }
+    .login button { border: 0; background: var(--accent); color: var(--on-accent); font-weight: 600; cursor: pointer; }
+    .login button:disabled { opacity: .6; cursor: default; }
+    #msg { min-height: 1.4em; margin-top: 10px; color: var(--busy); text-align: center; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <form class="login" id="form" autocomplete="off">
+    <div class="logos"><img class="logo-light" src="img/logo.png" alt="Universidad Anáhuac Cancún"><img class="logo-dark" src="img/logo-dark.png" alt="Universidad Anáhuac Cancún"></div>
+    <h1>ParkUni · Administración</h1>
+    <small>Ingresa la contraseña del panel</small>
+    <input type="password" id="pass" placeholder="Contraseña" autocomplete="current-password" required autofocus>
+    <button id="go">Entrar</button>
+    <div id="msg"></div>
+  </form>
+  <script src="js/config.js"></script>
+  <script>
+    const msg = document.getElementById('msg');
+    document.getElementById('form').onsubmit = async (e) => {
+      e.preventDefault();
+      const go = document.getElementById('go');
+      go.disabled = true; msg.textContent = '';
+      try {
+        const r = await api('/api/login', { password: document.getElementById('pass').value });
+        if (r.ok) { location.href = 'admin.html'; return; }
+        msg.textContent = r.error || 'No se pudo iniciar sesión';
+      } catch { msg.textContent = 'Servidor no disponible'; }
+      document.getElementById('pass').value = '';
+      go.disabled = false;
+    };
+  </script>
+</body>
+</html>

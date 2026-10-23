@@ -20,6 +20,7 @@
         <button id="mapCampus">Campus</button>
       </div>
       <a href="index.html" target="_blank">App del conductor ↗</a>
+      <a href="#" id="logout">Cerrar sesión</a>
       <div class="conn" id="conn"><span class="dot"></span><span id="connText">Conectando…</span></div>
     </div>
   </header>
@@ -83,6 +84,15 @@
       <h3>Sensores ESP32</h3>
       <div class="sensors" id="sensors"></div>
       <small id="espNote"></small>
+    </div>
+
+    <div class="card" id="ledCard">
+      <h3>Prueba de LED RGB</h3>
+      <div class="ledtest" id="ledTest"></div>
+      <div class="row wrap">
+        <button class="btn ghost" id="ledAuto">Terminar prueba (todos a automático)</button>
+      </div>
+      <small id="ledNote">Elige un color para un LED y míralo en la maqueta (tarda ~1.5 s). Si un color no sale, ese canal del LED (o su resistencia o cable) falla. La prueba se apaga sola a los 3 minutos.</small>
     </div>
 
     <div class="card">

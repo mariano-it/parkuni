@@ -6,17 +6,27 @@
 //   * Cajón 1 = sensor AJ-SR04M impermeable (límite 50 cm); cajones 2-4 = HC-SR04 (límite 10 cm).
 //   * Reporta por HTTP al servidor (POST /api/sensor) y de la misma respuesta lee si hay EMERGENCIA:
 //     en ese caso los 4 LED parpadean en MORADO (rojo + azul) hasta que el administrador la desactive.
+//   * Prueba de LED: desde el panel (admin.html) se puede fijar un color por LED para comprobar cuál falla.
 //   * Sin WiFi o sin servidor los LED siguen funcionando solos con los sensores.
+//   * El servidor se busca por NOMBRE (mDNS: parkuni.local), no por IP: así da igual en qué red esté la laptop.
 //
 // Cableado (no cambiar): ECHO por divisor de voltaje 1k + 2k (de 5 V a 3.3 V); sensores a VIN (5 V);
 // cátodos de los LED RGB y tierras comunes a GND. LED de cátodo común: HIGH = encendido.
 
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <ESPmDNS.h>
+#include <Preferences.h>
 
 // ======================= RED Y SERVIDOR =======================
 const char* WIFI_SSID  = "Anahuac";                                 // red abierta, sin contraseña
-const char* SERVER_URL = "http://172.20.5.57:8000/api/sensor";      // IP de la compu del servidor (cámbiala si cambia)
+
+// El servidor NO va por IP (cambia en cada red): se busca su nombre con mDNS. La laptop se llama "parkuni" y
+// responde como parkuni.local (avahi). Si el nombre no responde se usa la última IP que funcionó (queda guardada
+// en la memoria del ESP32, sobrevive a reinicios) y, si nunca hubo una, SERVER_IP_RESPALDO.
+const char* SERVER_HOST        = "parkuni";            // debe ser el nombre (hostname) de la laptop
+const int   SERVER_PORT        = 8000;
+const char* SERVER_IP_RESPALDO = "172.20.5.57";        // solo si nunca se encontró al servidor por nombre
 
 const unsigned long SEND_MS    = 1500;   // cada cuánto se reporta al servidor
 const unsigned long MEASURE_MS = 600;    // cada cuánto se mide
@@ -39,7 +49,13 @@ const int HISTERESIS   = 3;                       // cm de margen para volver a 
 bool occupied[N];
 int  distanceCm[N];                               // 0 = sin eco (fuera de rango)
 bool emergency = false;
+int  testMask[N] = { -1, -1, -1, -1 };            // prueba de LED pedida desde el panel: -1 = normal, 0-7 = bits R=1 G=2 B=4
 unsigned long lastMeasure = 0, lastSend = 0;
+
+Preferences prefs;                                // memoria no volátil: guarda la última IP buena del servidor
+String serverIp = "";                             // IP que se está usando ("" = todavía hay que buscarla)
+int failures = 0;                                 // reportes seguidos que fallaron
+unsigned long lastResolve = 0;
 
 // ======================= LED =======================
 void setColor(int i, bool r, bool g, bool b) {
@@ -49,14 +65,12 @@ void setColor(int i, bool r, bool g, bool b) {
 }
 
 void updateLeds() {
-  if (emergency) {
-    bool on = (millis() / 500) % 2 == 0;                      // 1 s por ciclo
-    for (int i = 0; i < N; i++) setColor(i, on, false, on);   // morado = rojo + azul
-  } else {
-    for (int i = 0; i < N; i++) {
-      if (occupied[i]) setColor(i, true, false, false);       // ROJO  (ocupado)
-      else             setColor(i, false, true, false);       // VERDE (libre)
-    }
+  bool blink = (millis() / 500) % 2 == 0;                     // 1 s por ciclo
+  for (int i = 0; i < N; i++) {
+    if (testMask[i] >= 0)  setColor(i, testMask[i] & 1, testMask[i] & 2, testMask[i] & 4);   // prueba del panel (manda sobre todo)
+    else if (emergency)    setColor(i, blink, false, blink);  // morado = rojo + azul
+    else if (occupied[i])  setColor(i, true, false, false);   // ROJO  (ocupado)
+    else                   setColor(i, false, true, false);   // VERDE (libre)
   }
 }
 
@@ -99,14 +113,50 @@ void measure() {
 // ======================= RED =======================
 void connectWiFi() {
   if (WiFi.status() == WL_CONNECTED) return;
+  serverIp = "";                                              // red nueva o reconectada: volver a buscar al servidor
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);                                       // sin ahorro de energía: no se pierden las respuestas mDNS
   WiFi.begin(WIFI_SSID);
   unsigned long t0 = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 8000) { delay(200); updateLeds(); }
 }
 
+// Busca al servidor por nombre. Devuelve true si el nombre respondió; si no, deja la última IP buena o la de respaldo.
+bool resolveServer() {
+  lastResolve = millis();
+  IPAddress ip(0, 0, 0, 0);
+  if (MDNS.begin("parkuni-esp32")) ip = MDNS.queryHost(SERVER_HOST, 2000);   // bloquea hasta 2 s si nadie contesta
+  if (ip != IPAddress(0, 0, 0, 0)) {
+    serverIp = ip.toString();
+    if (serverIp != prefs.getString("ip", "")) prefs.putString("ip", serverIp);   // solo escribe si cambió (cuida la flash)
+    Serial.printf("Servidor: %s.local -> %s\n", SERVER_HOST, serverIp.c_str());
+    return true;
+  }
+  if (serverIp.length() == 0) serverIp = prefs.getString("ip", SERVER_IP_RESPALDO);
+  Serial.printf("Servidor: %s.local no respondio, uso %s\n", SERVER_HOST, serverIp.c_str());
+  return false;
+}
+
+void clearTest() { for (int i = 0; i < N; i++) testMask[i] = -1; }
+
+// La respuesta trae {"test": {"A2": 1, ...}} solo con los LED en prueba; los demás siguen normales.
+void parseTest(const String& body) {
+  int t = body.indexOf("\"test\"");
+  for (int i = 0; i < N; i++) {
+    int old = testMask[i];
+    testMask[i] = -1;
+    if (t >= 0) {
+      int k = body.indexOf(String("\"") + IDS[i] + "\":", t);
+      if (k >= 0) testMask[i] = body.substring(k + 5).toInt() & 7;
+    }
+    if (testMask[i] != old) Serial.printf("Prueba LED %s: %d\n", IDS[i], testMask[i]);
+  }
+}
+
 void report() {
   if (WiFi.status() != WL_CONNECTED) return;
+  // primer reporte en esta red, o varios fallos seguidos (el servidor pudo cambiar de IP): buscarlo de nuevo
+  if (serverIp.length() == 0 || (failures >= 3 && millis() - lastResolve > 10000)) resolveServer();
   String json = "{\"sensors\":{";
   for (int i = 0; i < N; i++) {
     json += "\""; json += IDS[i]; json += "\":{\"occupied\":";
@@ -117,21 +167,27 @@ void report() {
   json += "}}";
 
   HTTPClient http;
-  http.begin(SERVER_URL);
+  http.begin("http://" + serverIp + ":" + String(SERVER_PORT) + "/api/sensor");
   http.setTimeout(2500);
   http.addHeader("Content-Type", "application/json");
   int code = http.POST(json);
   if (code == 200) {
     String body = http.getString();                           // {"ok": true, "emergency": false}
     emergency = body.indexOf("\"emergency\": true") >= 0 || body.indexOf("\"emergency\":true") >= 0;
+    parseTest(body);
+    failures = 0;
+  } else {
+    failures++;
+    if (failures >= 3) clearTest();                           // sin servidor no se queda un color de prueba pegado
   }
   http.end();
-  Serial.printf("POST -> %d  emergencia=%d\n", code, emergency);
+  Serial.printf("POST %s -> %d  emergencia=%d\n", serverIp.c_str(), code, emergency);
 }
 
 // ======================= SETUP / LOOP =======================
 void setup() {
   Serial.begin(115200);
+  prefs.begin("parkuni", false);
   for (int i = 0; i < N; i++) {
     pinMode(trigPins[i], OUTPUT);
     pinMode(echoPins[i], INPUT);

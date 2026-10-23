@@ -10,25 +10,42 @@ Hace tres cosas:
   2. Guarda el estado en SQLite (server/data/parkuni.db): sensores, cajones forzados, simulación,
      límite de velocidad, eventos y el estado de emergencia.
   3. Recibe los datos del ESP32 (POST /api/sensor) y le contesta si hay emergencia activa.
-  4. Reserva cajones para los conductores (POST /api/claim) para no mandar a dos al mismo.
+  4. Prueba de LED RGB desde el panel (POST /api/ledtest): el ESP32 recibe el color en la respuesta de /api/sensor.
+  5. Reserva cajones para los conductores (POST /api/claim) para no mandar a dos al mismo.
 
-Variables de entorno:
-  PARKUNI_EMERGENCY_PASSWORD   contraseña para activar/desactivar la emergencia (por defecto: anahuac2027)
+Variables de entorno (en el servidor viven en /etc/parkuni.env, nunca en el código):
+  PARKUNI_ADMIN_PASSWORD       contraseña del panel de administración (sin ella el panel queda bloqueado)
+  PARKUNI_EMERGENCY_PASSWORD   contraseña para activar/desactivar la emergencia (sin ella la emergencia queda bloqueada)
+  PARKUNI_ADMIN_LOCAL_ONLY     "1": el panel y sus rutas solo se aceptan desde esta misma máquina (127.0.0.1)
   PARKUNI_DB                   ruta del archivo SQLite
 """
-import argparse, hmac, json, os, socket, sqlite3, ssl, subprocess, threading, time
+import argparse, hmac, json, os, secrets, socket, sqlite3, ssl, subprocess, threading, time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..", "public")                      # lo único que se publica
 DB_PATH = os.environ.get("PARKUNI_DB", os.path.join(HERE, "data", "parkuni.db"))
-EM_PASSWORD = os.environ.get("PARKUNI_EMERGENCY_PASSWORD", "anahuac2027")
+EM_PASSWORD = os.environ.get("PARKUNI_EMERGENCY_PASSWORD", "")
+ADMIN_PASSWORD = os.environ.get("PARKUNI_ADMIN_PASSWORD", "")
+ADMIN_LOCAL_ONLY = os.environ.get("PARKUNI_ADMIN_LOCAL_ONLY") == "1"
+SESSION_TTL = 8 * 3600   # la sesión del panel dura 8 horas
+COOKIE = "parkuni_session"
+# rutas de escritura que solo puede usar el administrador (el ESP32 y la app del conductor usan las demás)
+ADMIN_POST = {"/api/ledtest", "/api/emergency", "/api/override", "/api/overrides/clear", "/api/sim", "/api/config", "/api/reset"}
+ADMIN_PAGES = {"/admin.html", "/js/admin.js"}
+LOOPBACK = ("127.0.0.1", "::1")
 STALE_S = 120            # un sensor sin reportar en este tiempo se marca "sin señal"
 DRIVER_TTL = 10          # un conductor sin latido en este tiempo desaparece del panel
 
 LOCK = threading.Lock()
 DRIVERS = {}             # id -> {target, x, y, speed, t}   (solo en memoria)
-FAILS = []               # intentos fallidos de contraseña (para frenar fuerza bruta)
+FAILS = []               # intentos fallidos de contraseña de emergencia (para frenar fuerza bruta)
+LOGIN_FAILS = {}         # ip -> intentos fallidos de inicio de sesión del último minuto
+SESSIONS = {}            # token -> vencimiento (solo en memoria: reiniciar el servidor cierra las sesiones)
+LED_TEST = {}            # id de sensor -> {color, t}   (prueba de LED RGB desde el panel; solo en memoria)
+LED_TEST_TTL = 180       # la prueba se apaga sola: si se olvida, los LED vuelven a indicar libre / ocupado
+LED_SENSORS = ["A1", "A2", "A3", "A4"]
+LED_COLORS = {"off": 0, "red": 1, "green": 2, "yellow": 3, "blue": 4, "purple": 5, "cyan": 6, "white": 7}   # máscara R=1 G=2 B=4
 TLS_CTX = None
 
 
@@ -88,6 +105,7 @@ def snapshot(with_events):
         "speedingCount": kv_get("speeding", 0),
         "esp": bool(seen) and len(stale) < len(seen),
         "emergency": emergency_state(),
+        "ledTest": led_test_active(),
         "drivers": [{"id": k, **d} for k, d in DRIVERS.items()],
         "events": [],
         "now": now,
@@ -98,12 +116,35 @@ def snapshot(with_events):
     return out
 
 
+def led_test_active():
+    """Pruebas de LED vigentes {id: color}; descarta las vencidas."""
+    now = time.time()
+    for k in [k for k, v in LED_TEST.items() if now - v["t"] > LED_TEST_TTL]:
+        del LED_TEST[k]
+    return {k: v["color"] for k, v in LED_TEST.items()}
+
+
+def led_test_set(target, color):
+    """target: id de sensor o 'all'. color: nombre de LED_COLORS, 'auto' o None para volver a lo normal."""
+    ids = LED_SENSORS if target == "all" else [target] if target in LED_SENSORS else []
+    if not ids or (color not in LED_COLORS and color not in (None, "auto")):
+        return False
+    for sid in ids:
+        if color in LED_COLORS:
+            LED_TEST[sid] = {"color": color, "t": time.time()}
+        else:
+            LED_TEST.pop(sid, None)
+    return True
+
+
 def set_emergency(on, password):
     """Devuelve (ok, mensaje). Exige la contraseña tanto para activar como para desactivar."""
     now = time.time()
     FAILS[:] = [t for t in FAILS if now - t < 60]
     if len(FAILS) >= 5:
         return False, "Demasiados intentos. Espera un minuto."
+    if not EM_PASSWORD:
+        return False, "La contraseña de emergencia no está configurada en el servidor"
     if not hmac.compare_digest(str(password or "").encode(), EM_PASSWORD.encode()):
         FAILS.append(now)
         add_event("Intento de emergencia con contraseña incorrecta", "security")
@@ -111,6 +152,27 @@ def set_emergency(on, password):
     kv_set("emergency", {"on": bool(on), "since": now if on else None})
     add_event("⚠ EMERGENCIA ACTIVADA: LED en morado intermitente" if on else "Emergencia desactivada: LED normales", "emergency")
     return True, "ok"
+
+
+def login_try(ip, password):
+    """Devuelve (token, error). Frena la fuerza bruta: 5 fallos por minuto desde la misma IP."""
+    now = time.time()
+    fails = [t for t in LOGIN_FAILS.get(ip, []) if now - t < 60]
+    LOGIN_FAILS[ip] = fails
+    if len(fails) >= 5:
+        return None, "Demasiados intentos. Espera un minuto."
+    if not ADMIN_PASSWORD:
+        return None, "El panel está bloqueado: falta PARKUNI_ADMIN_PASSWORD en el servidor"
+    if not hmac.compare_digest(str(password or "").encode(), ADMIN_PASSWORD.encode()):
+        fails.append(now)
+        add_event(f"Intento de inicio de sesión del panel con contraseña incorrecta ({ip})", "security")
+        return None, "Contraseña incorrecta"
+    for k in [k for k, exp in SESSIONS.items() if exp < now]:
+        del SESSIONS[k]
+    token = secrets.token_urlsafe(32)
+    SESSIONS[token] = now + SESSION_TTL
+    add_event(f"Inicio de sesión en el panel ({ip})", "security")
+    return token, None
 
 
 # ----------------------------------------------------------------------------- HTTP
@@ -131,19 +193,48 @@ class Handler(SimpleHTTPRequestHandler):
         if "/api/" not in self.path:
             super().log_message(fmt, *args)
 
-    def _json(self, obj, code=200):
+    def _json(self, obj, code=200, headers=()):
         body = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
+        for k, v in headers:
+            self.send_header(k, v)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
+    def _token(self):
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == COOKIE:
+                return v
+        return None
+
+    def _admin(self):
+        """True si la petición trae una sesión de administrador vigente (y, si se pidió, viene de esta máquina)."""
+        if ADMIN_LOCAL_ONLY and self.client_address[0] not in LOOPBACK:
+            return False
+        exp = SESSIONS.get(self._token())
+        return bool(exp and exp > time.time())
+
+    def _cookie(self, value, max_age):
+        return [("Set-Cookie", f"{COOKIE}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}"
+                               + ("; Secure" if TLS_CTX else ""))]
+
     def do_GET(self):
         path = self.path.split("?")[0]
+        if path in ADMIN_PAGES and not self._admin():
+            if path == "/js/admin.js":
+                return self._json({"ok": False, "error": "auth"}, 401)
+            self.send_response(302)
+            self.send_header("Location", "/login.html")
+            self.send_header("Content-Length", "0")
+            return self.end_headers()
+        if path == "/api/me":
+            return self._json({"admin": self._admin(), "configured": bool(ADMIN_PASSWORD), "localOnly": ADMIN_LOCAL_ONLY})
         if path == "/api/status":
             with LOCK:
-                return self._json(snapshot("events" in self.path))
+                return self._json(snapshot("events" in self.path and self._admin()))
         if path == "/api/hardware":                      # ligero: solo lo que necesita el ESP32
             with LOCK:
                 return self._json({"emergency": emergency_state()["on"]})
@@ -156,6 +247,20 @@ class Handler(SimpleHTTPRequestHandler):
         except ValueError:
             return self._json({"error": "json"}, 400)
         p = self.path.split("?")[0]
+        if p == "/api/login":
+            ip = self.client_address[0]
+            if ADMIN_LOCAL_ONLY and ip not in LOOPBACK:
+                return self._json({"ok": False, "error": "El panel solo se puede abrir desde la laptop del servidor"}, 403)
+            with LOCK:
+                token, err = login_try(ip, d.get("password"))
+            if err:
+                return self._json({"ok": False, "error": err}, 429 if err.startswith("Demasiados") else 403)
+            return self._json({"ok": True}, headers=self._cookie(token, SESSION_TTL))
+        if p == "/api/logout":
+            SESSIONS.pop(self._token(), None)
+            return self._json({"ok": True}, headers=self._cookie("", 0))
+        if p in ADMIN_POST and not self._admin():
+            return self._json({"ok": False, "error": "auth"}, 401)
         with LOCK:
             if p == "/api/sensor":
                 # ESP32: {"sensors": {"A1": {"occupied": true, "distance_cm": 14}, ...}}  (o un solo {"id":..})
@@ -171,7 +276,15 @@ class Handler(SimpleHTTPRequestHandler):
                     if old is not None and old[0] != occ:
                         add_event(f"Sensor {sid}: {'ocupado' if occ else 'liberado'}", "sensor")
                 DB.commit()
-                return self._json({"ok": True, "emergency": emergency_state()["on"]})
+                # "test": máscaras de color (R=1 G=2 B=4) por sensor, solo de los LED en prueba desde el panel
+                test = {k: LED_COLORS[c] for k, c in led_test_active().items()}
+                return self._json({"ok": True, "emergency": emergency_state()["on"], "test": test})
+            if p == "/api/ledtest":
+                color = d.get("color")
+                if not led_test_set(str(d.get("id")), color):
+                    return self._json({"ok": False, "error": "id o color no válido"}, 400)
+                add_event(f"Prueba de LED {d.get('id')}: {color or 'auto'}", "config")
+                return self._json({"ok": True, "ledTest": led_test_active()})
             if p == "/api/claim":
                 # Reserva atómica de un cajón: dos conductores nunca reciben el mismo.
                 me, spot, now = str(d.get("id"))[:20], str(d.get("spot") or "")[:32], time.time()
@@ -262,8 +375,12 @@ def main():
     print(f"Admin     : {scheme}://localhost:{a.port}/admin.html")
     print(f"ESP32     : POST {scheme}://{ip}:{a.port}/api/sensor")
     print(f"Base      : {os.path.abspath(DB_PATH)}")
-    if EM_PASSWORD == "anahuac2027":
-        print("Aviso     : usando la contraseña de emergencia por defecto (define PARKUNI_EMERGENCY_PASSWORD).")
+    if not ADMIN_PASSWORD:
+        print("Aviso     : falta PARKUNI_ADMIN_PASSWORD: el panel de administración queda bloqueado.")
+    if not EM_PASSWORD:
+        print("Aviso     : falta PARKUNI_EMERGENCY_PASSWORD: la emergencia queda bloqueada.")
+    if ADMIN_LOCAL_ONLY:
+        print("Panel     : solo se acepta desde esta máquina (PARKUNI_ADMIN_LOCAL_ONLY=1).")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:          # Ctrl+C: cerrar limpio, sin traceback

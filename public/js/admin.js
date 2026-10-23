@@ -91,6 +91,7 @@ function render(st) {
   $('kSpeed').textContent = st.speedingCount;
   $('limit').textContent = st.speedLimit;
   renderEmergency(st.emergency);
+  renderLedTest(st.ledTest || {});
 
   $('zones').closest('.card').hidden = !MULTI;
   $('simCard').hidden = !MAP.simulate;
@@ -184,6 +185,33 @@ $('emForm').onsubmit = async (e) => {
   poll();
 };
 
+/* ---------- prueba de LED RGB ---------- */
+const LED_COLORS = [['red', 'Rojo', '#e0464e'], ['green', 'Verde', '#1fae6b'], ['blue', 'Azul', '#2f6fed'],
+  ['yellow', 'Amarillo', '#f2c200'], ['purple', 'Morado', '#9b3fd1'], ['cyan', 'Cian', '#16b8c8'],
+  ['white', 'Blanco', '#ffffff'], ['off', 'Apagado', '#222222'], ['auto', 'Auto', null]];
+const LED_IDS = ['A1', 'A2', 'A3', 'A4'];
+function ledRow(id, label, cur) {
+  const btns = LED_COLORS.map(([c, name, hex]) => {
+    const on = (cur || 'auto') === c;
+    const sw = hex ? `<i style="background:${hex}"></i>` : '<i class="auto"></i>';
+    return `<button class="ledbtn${on ? ' on' : ''}" data-led="${id}" data-color="${c}" title="${name}">${sw}<span>${name}</span></button>`;
+  }).join('');
+  return `<div class="ledrow"><b>${label}</b><div>${btns}</div></div>`;
+}
+function renderLedTest(test) {
+  const key = JSON.stringify(test);
+  if (renderLedTest.key === key) return;
+  renderLedTest.key = key;
+  $('ledTest').innerHTML = ledRow('all', 'Todos', null) + LED_IDS.map((id) => ledRow(id, `${id} · ${MAP.sensors[id] || ''}`, test[id])).join('');
+  $('ledAuto').disabled = !Object.keys(test).length;
+}
+$('ledTest').onclick = (e) => {
+  const b = e.target.closest('button[data-led]');
+  if (!b) return;
+  api('/api/ledtest', { id: b.dataset.led, color: b.dataset.color }).then(poll);
+};
+$('ledAuto').onclick = () => api('/api/ledtest', { id: 'all', color: 'auto' }).then(poll);
+
 /* ---------- selector de mapa ---------- */
 for (const [btn, id] of [['mapProto', 'prototype'], ['mapCampus', 'campus']]) {
   $(btn).classList.toggle('on', MAP.id === id);
@@ -219,3 +247,10 @@ Occ.compute({ slots: {}, seen: [], overrides: {}, sim: CONFIG.sim });
 for (const m of maps) m.lot.setOcc(Occ.map);
 poll();
 setInterval(poll, 1000);
+
+/* ---------- sesión ---------- */
+$('logout').onclick = async (e) => {
+  e.preventDefault();
+  try { await api('/api/logout', {}); } catch {}
+  location.href = 'login.html';
+};
