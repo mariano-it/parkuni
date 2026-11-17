@@ -271,7 +271,9 @@ const PROTOTYPE = (() => {
   E('again', 'R1', 'M0', [P(205, 510), P(155, 470), P(135, 432)], 'Pasillo');   // dar otra vuelta
 
   const segments = [{ id: 'P', zone: 'Prototipo', n: 4, pts: [P(240, 322), P(560, 322)] }];
-  const sensors = { A1: 'P-1', A2: 'P-2', A3: 'P-3', A4: 'P-4' };
+  // Orden de la maqueta (sensor 1..4 = A1..A4) respecto a los cajones de la app (P-1..P-4, de izquierda a derecha):
+  // sensor 1 → último cajón, sensor 2 → primero, sensor 3 → segundo, sensor 4 → tercero.
+  const sensors = { A1: 'P-4', A2: 'P-1', A3: 'P-2', A4: 'P-3' };
 
   return {
     id: 'prototype', title: 'Prototipo · 4 sensores', metersPerPx: 0.035, simulate: false, demoSpeed: 8,

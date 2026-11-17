@@ -211,7 +211,8 @@ const Occ = {
   counts: {},                           // zona → { free, total }
   total: { free: 0, total: 0 },
   compute(st, now = Date.now()) {
-    const seen = new Set(st.seen || []);
+    const stale = new Set(st.stale || []);
+    const seen = new Set((st.seen || []).filter((s) => !stale.has(s)));   // un sensor sin señal no manda: deja pasar lo forzado a mano
     this.map.clear();
     this.counts = Object.fromEntries(ZONES.map((z) => [z, { free: 0, total: 0 }]));
     this.total = { free: 0, total: 0 };

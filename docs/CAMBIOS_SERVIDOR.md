@@ -64,7 +64,9 @@ Deshacer: los archivos modificados (`parkuni.service`, `parkuni.ino`) se recuper
 |---|---|---|
 | Bloque `# >>> parkuni-tui >>>` al final de `~/.bash_profile` (copia previa en `~/.bash_profile.bak-20261019`) | Abrir el menú al iniciar sesión en una terminal de texto local | Borrar el bloque, o `cp ~/.bash_profile.bak-20261019 ~/.bash_profile` |
 
-El bloque **no** se activa en SSH, dentro del escritorio, con `PARKUNI_TUI=0` ni si existe `~/.sin-menu`, y nunca usa `exec`:
+**Actualización 2026-11-09:** el bloque ahora también se activa por SSH (sesión interactiva con terminal; `scp`/`sftp`/comandos sueltos no lo disparan). Copia previa en `~/.bash_profile.bak-20261109`. Para volver a no abrirlo por SSH, restaurar esa copia. Si el `TERM` del cliente no existe en la laptop (p. ej. `xterm-ghostty`, `xterm-kitty`), el bloque usa `xterm-256color`.
+
+El bloque **no** se activa dentro del escritorio local, con `PARKUNI_TUI=0` ni si existe `~/.sin-menu`, y nunca usa `exec`:
 si el menú falla o sales de él, queda la shell normal. Si el archivo de `/opt/parkuni` no existe, no hace nada.
 
 ### Los hace `sudo bash server/instalar.sh` (pendiente de correr)
@@ -108,3 +110,19 @@ No toca: SELinux (sigue `Enforcing`), el firewall, la red ni el entorno gráfico
 - **Freno de fuerza bruta:** 3 fallos en una hora (global, todas las IP) bloquean el apagado esa hora.
 - **Para volver a encender:** `sudo rm /opt/parkuni/server/data/APAGADO_DE_EMERGENCIA && sudo systemctl start parkuni` (y el túnel, si se quiere).
 - **Cómo deshacerlo:** quitar `PARKUNI_KILL_PASSWORD` de `/etc/parkuni.env` (el apagado queda inhabilitado) y reinstalar con `instalar.sh`.
+
+### SSH (2026-11-09)
+
+| Qué | Por qué | Cómo deshacerlo |
+|---|---|---|
+| `sudo systemctl enable --now sshd` (lo corre el usuario) | Entrar a la laptop por la red (`ssh home-lab@parkuni.local`) y ver el menú de ParkUni | `sudo systemctl disable --now sshd` |
+
+### Arreglo: cajones forzados a mano ignorados con el ESP32 apagado (2026-11-09)
+
+| Qué | Por qué | Cómo deshacerlo |
+|---|---|---|
+| `public/js/graph.js` (`Occ.compute`): un sensor con lectura vieja (`stale`, "sin señal") ya no cuenta como sensor; se usa el cajón forzado a mano (o el estado normal) | Con el ESP32 apagado, la última lectura guardada (`A1`-`A4`) seguía mandando sobre el panel: al hacer clic el cajón no cambiaba y la app del conductor veía los 4 cajones libres | Restaurar `~/respaldos-parkuni/graph.js.antes-del-arreglo` (o `git checkout public/js/graph.js`) y reinstalar con `instalar.sh` |
+
+- Antes del cambio se hizo respaldo de la base: `~/respaldos-parkuni/parkuni-20261109-171837.db` (con `server/respaldo.py`, integrity_check OK).
+- Con el ESP32 encendido nada cambia: los sensores con señal siguen mandando sobre lo forzado a mano.
+- Solo cambia el frontend (`public/`); el servidor y la base no se tocan. Pendiente: `sudo bash server/instalar.sh` (lo corre el usuario).
